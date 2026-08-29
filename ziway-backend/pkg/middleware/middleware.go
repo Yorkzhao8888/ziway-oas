@@ -33,12 +33,22 @@ func JWTAuth(verifier *jwt.Verifier, rdb *redis.Client, logger *zap.Logger) gin.
 		if err != nil {
 			logger.Warn("jwt verification failed",
 				zap.String("path", c.Request.URL.Path),
+				zap.String("audit_type", "jwt_verify"),
+				zap.String("result", "failure"),
 				zap.Error(err),
 			)
 			response.Unauthorized(c, "invalid or expired token")
 			c.Abort()
 			return
 		}
+		// Audit log: JWT verification success
+		logger.Info("jwt verification success",
+			zap.String("audit_type", "jwt_verify"),
+			zap.String("identity_id", claims.IdentityID),
+			zap.String("role", claims.Role),
+			zap.String("result", "success"),
+			zap.String("path", c.Request.URL.Path),
+		)
 		// 黑名单检查（Redis 可用时）
 		if rdb != nil && claims.TokenID != "" {
 			exists, _ := rdb.Exists(c.Request.Context(), "ziway:blacklist:"+claims.TokenID).Result()

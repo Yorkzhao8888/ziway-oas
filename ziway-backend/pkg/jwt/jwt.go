@@ -12,8 +12,13 @@ import (
 // Claims JWT载荷
 type Claims struct {
 	UserID       string   `json:"user_id"`
+	IdentityID   string   `json:"identity_id"`
 	IdentityType string   `json:"identity_type"` // human / nhi
-	Roles        []string `json:"roles"`
+	Role         string   `json:"role"`
+	SubRole      string   `json:"sub_role"`
+	NHIFlag      bool     `json:"nhi_flag"`
+	MSAccess     []string `json:"ms_access"`
+	Roles        []string `json:"roles,omitempty"`
 	ActiveRole   string   `json:"active_role,omitempty"`
 	Domain       string   `json:"domain,omitempty"`
 	AgentService string   `json:"agent_service,omitempty"`

@@ -37,6 +37,7 @@ grpc:
 # JWT/RBAC security trio — all three files must exist or process refuses to start.
 jwt:
   public_key_path: "configs/public_key.pem"
+  private_key_path: "configs/keys/private.pem"
   issuer: "ziway-oas"
   access_ttl: "15m"
 

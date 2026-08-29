@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"time"
 )
 
 // FileRBACEnforcer implements RBACEnforcer using a model config and CSV policy file.
@@ -14,10 +15,11 @@ import (
 // Resource patterns support '*' as wildcard matching any path segment.
 // Method '*' matches any HTTP method.
 type FileRBACEnforcer struct {
-	mu     sync.RWMutex
-	rules  []rbacRule
-	roles  map[string][]string // user/role → parent roles
-	logger interface{ Info(string, ...interface{}) }
+	mu         sync.RWMutex
+	rules      []rbacRule
+	roles      map[string][]string
+	policyPath string
+	lastMod    time.Time
 }
 
 type rbacRule struct {
@@ -37,7 +39,8 @@ func NewFileRBACEnforcer(modelPath, policyPath string) (*FileRBACEnforcer, error
 	}
 
 	enforcer := &FileRBACEnforcer{
-		roles: make(map[string][]string),
+		roles:      make(map[string][]string),
+		policyPath: policyPath,
 	}
 
 	if err := enforcer.loadPolicy(policyPath); err != nil {
@@ -48,6 +51,11 @@ func NewFileRBACEnforcer(modelPath, policyPath string) (*FileRBACEnforcer, error
 }
 
 func (e *FileRBACEnforcer) loadPolicy(path string) error {
+	info, err := os.Stat(path)
+	if err != nil {
+		return err
+	}
+
 	f, err := os.Open(path)
 	if err != nil {
 		return err
@@ -83,8 +91,56 @@ func (e *FileRBACEnforcer) loadPolicy(path string) error {
 
 	e.mu.Lock()
 	e.rules = rules
+	e.lastMod = info.ModTime()
 	e.mu.Unlock()
 	return nil
+}
+
+// Reload re-reads the policy file from disk. Returns true if the file changed.
+func (e *FileRBACEnforcer) Reload() (bool, error) {
+	info, err := os.Stat(e.policyPath)
+	if err != nil {
+		return false, err
+	}
+
+	e.mu.RLock()
+	unchanged := info.ModTime().Equal(e.lastMod)
+	e.mu.RUnlock()
+
+	if unchanged {
+		return false, nil
+	}
+
+	if err := e.loadPolicy(e.policyPath); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// WatchFile starts a goroutine that checks for policy file changes every interval.
+// Call it once at startup. The goroutine exits when stopCh is closed.
+func (e *FileRBACEnforcer) WatchFile(interval time.Duration, stopCh <-chan struct{}, onChange func(ruleCount int)) {
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-stopCh:
+				return
+			case <-ticker.C:
+				changed, err := e.Reload()
+				if err != nil {
+					continue
+				}
+				if changed && onChange != nil {
+					e.mu.RLock()
+					count := len(e.rules)
+					e.mu.RUnlock()
+					onChange(count)
+				}
+			}
+		}
+	}()
 }
 
 // Enforce checks if userID (with given roles) is allowed to access resource with action.

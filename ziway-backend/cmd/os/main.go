@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"time"
 
 	"go.uber.org/zap"
 
@@ -90,6 +91,13 @@ func main() {
 		zap.String("model", rbacModelPath),
 		zap.String("policy", rbacPolicyPath),
 	)
+
+	// Start policy file watcher — hot reload when OAS regenerates CSV
+	stopWatch := make(chan struct{})
+	rbacEnforcer.WatchFile(5*time.Second, stopWatch, func(ruleCount int) {
+		log.Info("RBAC policy hot-reloaded", zap.Int("rules", ruleCount))
+	})
+	defer close(stopWatch)
 
 	// ── BOS orchestrators ──
 	deps := bos.Dependencies{
