@@ -13,7 +13,9 @@ func Load() (*viper.Viper, error) {
 	v := viper.New()
 	env := os.Getenv("APP_ENV")
 	if env == "" {
-		env = "prod"
+		// Default to dev (SQLite) for preview/sandbox environments
+		// Production should explicitly set APP_ENV=prod
+		env = "dev"
 	}
 
 	switch env {
