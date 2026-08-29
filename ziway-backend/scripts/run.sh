@@ -33,4 +33,7 @@ export ZIWAY_SERVER_HTTP_PORT="$PORT"
 
 mkdir -p data
 
-exec ./bin/ms
+# Start OAS as the public-facing service
+# OAS handles: POST /api/v1/os/{supply}/proxy/ams/auth/login (JWT issuance)
+# OAS also provides RBAC policy management and audit logging
+exec ./bin/oas

@@ -2,7 +2,7 @@
 sub_id = "d9cc33f6"
 name = "ziway-backend"
 project_type = "backend"
-entrypoint = "cmd/ms/main.go"
+entrypoint = "cmd/oas/main.go"
 
 [deploy]
 build = ["bash", "scripts/build.sh"]

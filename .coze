@@ -4,7 +4,7 @@ name = "ziway-backend"
 requires = ["golang-1.25"]
 project_type = "backend"
 version = "0.0.35"
-entrypoint = "ziway-backend/cmd/ms/main.go"
+entrypoint = "ziway-backend/cmd/oas/main.go"
 
 [preview]
 preview_enable = "disabled"
