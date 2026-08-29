@@ -150,12 +150,14 @@ func (OASUser) TableName() string { return "users" }
 
 // OASRole / OASUserRole — 与 AMS 共享同一 DB 表。
 type OASRole struct {
-	ID        uint64         `gorm:"primarykey"`
-	RoleCode  string         `gorm:"uniqueIndex;size:32"`
-	Name      string         `gorm:"size:64"`
-	CreatedAt time.Time
-	UpdatedAt time.Time
-	DeletedAt gorm.DeletedAt `gorm:"index"`
+	ID          uint64         `gorm:"primarykey"`
+	RoleCode    string         `gorm:"uniqueIndex;size:32"`
+	Name        string         `gorm:"size:64"`
+	Description string         `gorm:"size:256"`
+	Permissions string         `gorm:"type:text"`
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
+	DeletedAt   gorm.DeletedAt `gorm:"index"`
 }
 func (OASRole) TableName() string { return "roles" }
 
@@ -656,18 +658,19 @@ func seedTestUser(database *gorm.DB, log *zap.Logger) {
 	log.Info("test users seeded", zap.String("admin", "admin/test123"), zap.String("disabled", "disabled_user/disabled123"))
 
 	// Create SU role and assign to admin user
-	var suRole struct {
-		ID uint64 `gorm:"primarykey"`
-		RoleCode string `gorm:"uniqueIndex;size:32"`
-		Name string `gorm:"size:64"`
-	}
-	database.Table("roles").Where("role_code = ?", "SU").First(&suRole)
+	var suRole OASRole
+	database.Where("role_code = ?", "SU").First(&suRole)
 	if suRole.ID == 0 {
-		database.Table("roles").Create(map[string]interface{}{
-			"role_code": "SU", "name": "System User", "description": "System administrator",
-			"created_at": time.Now(), "updated_at": time.Now(),
-		})
-		database.Table("roles").Where("role_code = ?", "SU").First(&suRole)
+		suRole = OASRole{
+			RoleCode:    "SU",
+			Name:        "System User",
+			Description: "System administrator",
+		}
+		if err := database.Create(&suRole).Error; err != nil {
+			log.Error("failed to create SU role", zap.Error(err))
+			return
+		}
+		log.Info("SU role created", zap.Uint64("id", suRole.ID))
 	}
 	var adminUser OASUser
 	database.Where("username = ?", "admin").First(&adminUser)
@@ -675,9 +678,17 @@ func seedTestUser(database *gorm.DB, log *zap.Logger) {
 		var existing int64
 		database.Table("user_roles").Where("user_id = ? AND role_id = ?", adminUser.ID, suRole.ID).Count(&existing)
 		if existing == 0 {
-			database.Table("user_roles").Create(map[string]interface{}{
-				"user_id": adminUser.ID, "role_id": suRole.ID, "granted_by": "system-seed", "granted_at": time.Now(),
-			})
+			assignment := OASUserRole{
+				UserID:    adminUser.ID,
+				RoleID:    suRole.ID,
+				GrantedBy: "system-seed",
+				GrantedAt: time.Now(),
+			}
+			if err := database.Table("user_roles").Create(&assignment).Error; err != nil {
+				log.Error("failed to assign SU role to admin", zap.Error(err))
+			} else {
+				log.Info("SU role assigned to admin", zap.Uint64("user_id", adminUser.ID), zap.Uint64("role_id", suRole.ID))
+			}
 		}
 	}
 }
