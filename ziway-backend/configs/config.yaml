@@ -5,6 +5,8 @@
 app:
   env: prod
   name: ziway-backend
+  # Product edition: beta (内测版), public (公测版), production (正式版/生产版)
+  edition: production
 
 server:
   http_port: "8081"

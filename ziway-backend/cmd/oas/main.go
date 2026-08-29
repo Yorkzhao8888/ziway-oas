@@ -301,6 +301,131 @@ func main() {
 		})
 	})
 
+	// ===== Beta Edition: Quick Login API (一键登录) =====
+	// Only available in beta edition for testing purposes
+	edition := v.GetString("app.edition")
+	if edition == "" {
+		edition = "production"
+	}
+	log.Info("product edition", zap.String("edition", edition))
+
+	if edition == "beta" {
+		// POST /api/v1/auth/quick-login — one-click login for testing (beta only)
+		// Request: {"role": "SU"} or {"username": "admin"}
+		// Returns JWT without password verification
+		api.POST("/auth/quick-login", func(c *gin.Context) {
+			if jwtIssuer == nil {
+				response.InternalError(c, "jwt issuer not configured")
+				return
+			}
+			var req struct {
+				Role     string `json:"role"`
+				Username string `json:"username"`
+			}
+			if err := c.ShouldBindJSON(&req); err != nil || (req.Role == "" && req.Username == "") {
+				response.BadRequest(c, "role or username required")
+				return
+			}
+
+			// Find user by role or username
+			var user OASUser
+			if req.Username != "" {
+				if err := database.Where("username = ?", req.Username).First(&user).Error; err != nil {
+					response.NotFound(c, "test user not found")
+					return
+				}
+			} else {
+				// Find a test user with the specified role
+				var userID uint64
+				if err := database.Table("user_roles").
+					Select("user_roles.user_id").
+					Joins("JOIN roles r ON r.id = user_roles.role_id").
+					Where("r.role_code = ? AND user_roles.granted_by = ?", req.Role, "system-seed").
+					Pluck("user_roles.user_id", &userID).Error; err != nil || userID == 0 {
+					response.NotFound(c, "no test user found for role: "+req.Role)
+					return
+				}
+				if err := database.First(&user, userID).Error; err != nil {
+					response.NotFound(c, "test user not found")
+					return
+				}
+			}
+
+			// Get user roles
+			var roles []string
+			database.Table("user_roles").
+				Select("r.role_code").
+				Joins("JOIN roles r ON r.id = user_roles.role_id").
+				Where("user_roles.user_id = ?", user.ID).
+				Pluck("r.role_code", &roles)
+			activeRole := ""
+			if len(roles) > 0 {
+				activeRole = roles[0]
+			}
+
+			now := time.Now()
+			claims := &jwt.Claims{
+				UserID:       user.UserCode,
+				IdentityID:   user.UserCode,
+				IdentityType: map[string]string{"H": "human", "N": "nhi"}[user.EntityType],
+				Role:         activeRole,
+				SubRole:      "",
+				NHIFlag:      user.EntityType == "N",
+				MSAccess:     []string{"ams", "cms", "dms", "hms", "fms", "tms", "ems", "gms", "oms", "vms", "ims", "sms"},
+				Roles:        roles,
+				ActiveRole:   activeRole,
+				TokenID:      fmt.Sprintf("quick-%d-%d", user.ID, now.Unix()),
+			}
+			token, ttl, err := jwtIssuer.IssueAccessToken(claims)
+			if err != nil {
+				response.InternalError(c, "failed to issue token")
+				return
+			}
+
+			// Audit log
+			database.Create(&AuditLog{
+				UserID:   user.UserCode,
+				UserName: user.DisplayName,
+				Plane:    "admin",
+				Action:   "auth.quick-login",
+				Resource: "jwt",
+				Detail:   fmt.Sprintf("edition=beta, role=%s, token_id=%s", activeRole, claims.TokenID),
+			})
+
+			response.OK(c, gin.H{
+				"access_token": token,
+				"token_type":   "Bearer",
+				"expires_in":   ttl,
+				"identity_id":  user.UserCode,
+				"role":         activeRole,
+				"sub_role":     "",
+				"nhi_flag":     user.EntityType == "N",
+				"edition":      "beta",
+				"quick_login":  true,
+			})
+		})
+
+		// GET /api/v1/auth/test-accounts — list available test accounts (beta only)
+		api.GET("/auth/test-accounts", func(c *gin.Context) {
+			type TestAccount struct {
+				Username    string `json:"username"`
+				DisplayName string `json:"display_name"`
+				Role        string `json:"role"`
+				Password    string `json:"password"`
+			}
+			accounts := []TestAccount{
+				{Username: "admin", DisplayName: "系统管理员", Role: "SU", Password: "test123"},
+				{Username: "operator", DisplayName: "运营人员", Role: "AU", Password: "test123"},
+				{Username: "customer", DisplayName: "客户用户", Role: "CU", Password: "test123"},
+				{Username: "viewer", DisplayName: "访客", Role: "GU", Password: "test123"},
+			}
+			response.OK(c, gin.H{
+				"edition":  "beta",
+				"accounts": accounts,
+			})
+		})
+	}
+
 	// ===== Owner Plane (/owner/*) — OU 权限 =====
 	owner := api.Group("/owner")
 	{
@@ -495,8 +620,12 @@ func main() {
 
 	// Seed default RBAC policies if empty
 	seedRBACPolicies(database, log)
-	// Seed test user for login verification
-	seedTestUser(database, log)
+	// Seed test users based on product edition
+	edition = v.GetString("app.edition")
+	if edition == "" {
+		edition = "production"
+	}
+	seedTestUsers(database, log, edition)
 
 	port := v.GetString("server.http_port")
 	if port == "" {
@@ -625,26 +754,95 @@ func seedRBACPolicies(database *gorm.DB, log *zap.Logger) {
 }
 
 // seedTestUser creates a test user with bcrypt-hashed password if no users exist.
-func seedTestUser(database *gorm.DB, log *zap.Logger) {
+// seedTestUsers creates test accounts based on product edition.
+// Beta edition: multiple test accounts with different roles (SU/AU/CU/GU)
+// Production edition: only admin account
+func seedTestUsers(database *gorm.DB, log *zap.Logger, edition string) {
 	var count int64
 	database.Model(&OASUser{}).Count(&count)
 	if count > 0 {
 		return
 	}
+
 	hash, err := bcrypt.GenerateFromPassword([]byte("test123"), bcrypt.DefaultCost)
 	if err != nil {
 		log.Error("failed to hash test password", zap.Error(err))
 		return
 	}
-	database.Create(&OASUser{
-		UserCode:     "XHPZ#SU-TEST001",
-		Username:     "admin",
-		PasswordHash: string(hash),
-		DisplayName:  "System Admin",
-		IdentityType: "SU",
-		EntityType:   "H",
-		Status:       "active",
-	})
+	hashStr := string(hash)
+
+	// Define test accounts for beta edition
+	type testAccount struct {
+		UserCode     string
+		Username     string
+		DisplayName  string
+		IdentityType string
+		RoleCode     string
+		RoleName     string
+	}
+
+	accounts := []testAccount{
+		{UserCode: "XHPZ#SU-TEST001", Username: "admin", DisplayName: "系统管理员", IdentityType: "SU", RoleCode: "SU", RoleName: "System User"},
+	}
+
+	// Beta edition: add more test accounts with different roles
+	if edition == "beta" {
+		accounts = append(accounts,
+			testAccount{UserCode: "XHPZ#AU-TEST001", Username: "operator", DisplayName: "运营人员", IdentityType: "AU", RoleCode: "AU", RoleName: "Admin User"},
+			testAccount{UserCode: "XHPZ#CU-TEST001", Username: "customer", DisplayName: "客户用户", IdentityType: "CU", RoleCode: "CU", RoleName: "Customer User"},
+			testAccount{UserCode: "XHPZ#GU-TEST001", Username: "viewer", DisplayName: "访客", IdentityType: "GU", RoleCode: "GU", RoleName: "Guest User"},
+		)
+		log.Info("beta edition: seeding multiple test accounts")
+	}
+
+	// Create roles and users
+	for _, acc := range accounts {
+		// Create role if not exists
+		var role OASRole
+		database.Where("role_code = ?", acc.RoleCode).First(&role)
+		if role.ID == 0 {
+			role = OASRole{
+				RoleCode:    acc.RoleCode,
+				Name:        acc.RoleName,
+				Description: acc.RoleName + " role",
+			}
+			if err := database.Create(&role).Error; err != nil {
+				log.Error("failed to create role", zap.String("role", acc.RoleCode), zap.Error(err))
+				continue
+			}
+			log.Info("role created", zap.String("role_code", acc.RoleCode), zap.Uint64("id", role.ID))
+		}
+
+		// Create user
+		user := OASUser{
+			UserCode:     acc.UserCode,
+			Username:     acc.Username,
+			PasswordHash: hashStr,
+			DisplayName:  acc.DisplayName,
+			IdentityType: acc.IdentityType,
+			EntityType:   "H",
+			Status:       "active",
+		}
+		if err := database.Create(&user).Error; err != nil {
+			log.Error("failed to create user", zap.String("username", acc.Username), zap.Error(err))
+			continue
+		}
+
+		// Assign role
+		assignment := OASUserRole{
+			UserID:    user.ID,
+			RoleID:    role.ID,
+			GrantedBy: "system-seed",
+			GrantedAt: time.Now(),
+		}
+		if err := database.Table("user_roles").Create(&assignment).Error; err != nil {
+			log.Error("failed to assign role", zap.String("username", acc.Username), zap.Error(err))
+		} else {
+			log.Info("test user created", zap.String("username", acc.Username), zap.String("role", acc.RoleCode))
+		}
+	}
+
+	// Create disabled user for testing 403 response
 	hash2, _ := bcrypt.GenerateFromPassword([]byte("disabled123"), bcrypt.DefaultCost)
 	database.Create(&OASUser{
 		UserCode:     "XHPZ#DU-DISABLED",
@@ -655,40 +853,6 @@ func seedTestUser(database *gorm.DB, log *zap.Logger) {
 		EntityType:   "H",
 		Status:       "disabled",
 	})
-	log.Info("test users seeded", zap.String("admin", "admin/test123"), zap.String("disabled", "disabled_user/disabled123"))
 
-	// Create SU role and assign to admin user
-	var suRole OASRole
-	database.Where("role_code = ?", "SU").First(&suRole)
-	if suRole.ID == 0 {
-		suRole = OASRole{
-			RoleCode:    "SU",
-			Name:        "System User",
-			Description: "System administrator",
-		}
-		if err := database.Create(&suRole).Error; err != nil {
-			log.Error("failed to create SU role", zap.Error(err))
-			return
-		}
-		log.Info("SU role created", zap.Uint64("id", suRole.ID))
-	}
-	var adminUser OASUser
-	database.Where("username = ?", "admin").First(&adminUser)
-	if adminUser.ID > 0 {
-		var existing int64
-		database.Table("user_roles").Where("user_id = ? AND role_id = ?", adminUser.ID, suRole.ID).Count(&existing)
-		if existing == 0 {
-			assignment := OASUserRole{
-				UserID:    adminUser.ID,
-				RoleID:    suRole.ID,
-				GrantedBy: "system-seed",
-				GrantedAt: time.Now(),
-			}
-			if err := database.Table("user_roles").Create(&assignment).Error; err != nil {
-				log.Error("failed to assign SU role to admin", zap.Error(err))
-			} else {
-				log.Info("SU role assigned to admin", zap.Uint64("user_id", adminUser.ID), zap.Uint64("role_id", suRole.ID))
-			}
-		}
-	}
+	log.Info("test users seeded", zap.String("edition", edition), zap.Int("count", len(accounts)))
 }
