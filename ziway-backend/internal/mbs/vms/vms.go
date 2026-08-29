@@ -95,7 +95,7 @@ type VCASE struct {
 type Budget struct {
 	ID          uint64         `gorm:"primarykey" json:"id"`
 	BudgetNo    string         `gorm:"uniqueIndex;size:32" json:"budget_no"`
-	CaseID      *uint64        `index" json:"case_id,omitempty"`
+	CaseID      *uint64        `gorm:"index" json:"case_id,omitempty"`
 	FiscalYear  int            `json:"fiscal_year"`
 	Category    string         `gorm:"size:32;index" json:"category"`
 	Amount      float64        `gorm:"type:decimal(16,2)" json:"amount"`

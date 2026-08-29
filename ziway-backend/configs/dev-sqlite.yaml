@@ -36,3 +36,14 @@ kafka:
 grpc:
   enabled: false
   port: 9090
+
+# JWT/RBAC security trio — all three files must exist or process refuses to start.
+jwt:
+  public_key_path: "configs/public_key.pem"
+  issuer: "ziway-oas"
+  access_ttl: "15m"
+
+rbac:
+  model_path: "configs/rbac_model.conf"
+  policy_path: "configs/rbac_policy.csv"
+  enabled: true

@@ -76,7 +76,7 @@ type SeedTerminal struct {
 	ID           uint64         `gorm:"primarykey" json:"id"`
 	TerminalNo   string         `gorm:"uniqueIndex;size:32" json:"terminal_no"`
 	Name         string         `gorm:"size:128" json:"name"`
-	ProjectID    *uint64        `index" json:"project_id,omitempty"`
+	ProjectID    *uint64        `gorm:"index" json:"project_id,omitempty"`
 	Type         string         `gorm:"size:32;index" json:"type"` // pos/kiosk/mobile/online
 	Location     string         `gorm:"size:256" json:"location"`
 	OperatorID   string         `gorm:"size:32" json:"operator_id"`

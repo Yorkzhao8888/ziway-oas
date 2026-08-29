@@ -14,6 +14,7 @@ import (
 )
 
 // JWTAuth JWT认证中间件
+// rdb may be nil — blacklist check is skipped when Redis is unavailable.
 func JWTAuth(verifier *jwt.Verifier, rdb *redis.Client, logger *zap.Logger) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		authHeader := c.GetHeader("Authorization")
@@ -30,14 +31,22 @@ func JWTAuth(verifier *jwt.Verifier, rdb *redis.Client, logger *zap.Logger) gin.
 		}
 		claims, err := verifier.Verify(parts[1])
 		if err != nil {
+			logger.Warn("jwt verification failed",
+				zap.String("path", c.Request.URL.Path),
+				zap.Error(err),
+			)
 			response.Unauthorized(c, "invalid or expired token")
 			c.Abort()
 			return
 		}
-		// 黑名单检查
-		if claims.TokenID != "" {
+		// 黑名单检查（Redis 可用时）
+		if rdb != nil && claims.TokenID != "" {
 			exists, _ := rdb.Exists(c.Request.Context(), "ziway:blacklist:"+claims.TokenID).Result()
 			if exists > 0 {
+				logger.Warn("token revoked",
+					zap.String("user_id", claims.UserID),
+					zap.String("jti", claims.TokenID),
+				)
 				response.Unauthorized(c, "token revoked")
 				c.Abort()
 				return
@@ -76,8 +85,14 @@ type RBACEnforcer interface {
 	Enforce(userID, domain, resource, action string) (bool, error)
 }
 
+// RoleAwareEnforcer extends RBACEnforcer with role-based checking.
+type RoleAwareEnforcer interface {
+	RBACEnforcer
+	EnforceWithRoles(userID string, roles []string, resource, action string) (bool, error)
+}
+
 // RBAC 权限校验中间件
-func RBAC(enforcer RBACEnforcer) gin.HandlerFunc {
+func RBAC(enforcer RBACEnforcer, logger *zap.Logger) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		userID := c.GetString("user_id")
 		if userID == "" {
@@ -85,12 +100,48 @@ func RBAC(enforcer RBACEnforcer) gin.HandlerFunc {
 			c.Abort()
 			return
 		}
+
+		var roles []string
+		if r, ok := c.Get("roles"); ok {
+			if roleSlice, ok := r.([]string); ok {
+				roles = roleSlice
+			}
+		}
+
 		domain := c.GetString("domain")
 		if domain == "" {
 			domain = c.GetHeader("X-Domain")
 		}
-		allowed, err := enforcer.Enforce(userID, domain, c.Request.URL.Path, c.Request.Method)
-		if err != nil || !allowed {
+
+		resource := c.Request.URL.Path
+		action := c.Request.Method
+
+		var allowed bool
+		var err error
+
+		if ra, ok := enforcer.(RoleAwareEnforcer); ok && len(roles) > 0 {
+			allowed, err = ra.EnforceWithRoles(userID, roles, resource, action)
+		} else {
+			allowed, err = enforcer.Enforce(userID, domain, resource, action)
+		}
+
+		if err != nil {
+			logger.Error("rbac enforce error",
+				zap.String("user_id", userID),
+				zap.String("path", resource),
+				zap.Error(err),
+			)
+			response.Forbidden(c, "authorization error")
+			c.Abort()
+			return
+		}
+		if !allowed {
+			logger.Warn("rbac denied",
+				zap.String("user_id", userID),
+				zap.Strings("roles", roles),
+				zap.String("path", resource),
+				zap.String("method", action),
+			)
 			response.Forbidden(c, "insufficient permissions")
 			c.Abort()
 			return

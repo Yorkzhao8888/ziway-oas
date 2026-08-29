@@ -65,3 +65,6 @@ ziway-backend/
 - SQLite 开发模式下数据存储在 `data/ziway_p0.db`，启动前需确保 `data/` 目录存在
 - `services/ams/` 是 P1 独立服务，有独立的 `go.mod`，需单独构建
 - `internal/` 目录名为 `mbs/` 和 `bos/`（非 `ms/` 和 `os/`），与 import 路径和 package 声明一致
+- BOS（cmd/os）启动强校验安全三件套：`configs/public_key.pem` + `configs/rbac_model.conf` + `configs/rbac_policy.csv`，任一缺失 → fail-closed 拒绝启动
+- JWT 中间件 Redis 黑名单检查为可选（rdb=nil 时跳过），不影响 JWT 验签本身
+- `/health` 端点公开，`/api/v1/*` 全部需要 JWT + RBAC
