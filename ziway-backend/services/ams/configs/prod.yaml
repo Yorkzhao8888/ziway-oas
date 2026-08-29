@@ -1,0 +1,41 @@
+server:
+  http_port: 8080
+  grpc_port: 50051
+  mode: release
+
+database:
+  host: ${DB_HOST}
+  port: 5432
+  user: ${DB_USER}
+  password: ${DB_PASSWORD}
+  dbname: ziway_ams
+  sslmode: require
+  max_idle_conns: 20
+  max_open_conns: 200
+  log_level: error
+
+redis:
+  host: ${REDIS_HOST}
+  port: 6379
+  password: ${REDIS_PASSWORD}
+  db: 0
+  pool_size: 50
+
+jwt:
+  private_key_path: /etc/ziway/keys/private.pem
+  public_key_path: /etc/ziway/keys/public.pem
+  access_token_ttl: 2h
+  refresh_token_ttl: 168h
+  issuer: ziway-ams
+
+casbin:
+  model_path: /etc/ziway/rbac_model.conf
+
+log:
+  level: info
+  format: json
+  output: stdout
+
+service:
+  name: ziway-ams
+  token: ${SERVICE_TOKEN}

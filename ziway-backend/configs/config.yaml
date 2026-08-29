@@ -1,0 +1,35 @@
+# ziway-backend P0 production config (PostgreSQL)
+# ZW-ARC-015: each MBS has an independent schema (search_path).
+# BOS does not own a database. OAS shares oas_owner/oas_admin schemas.
+
+app:
+  env: prod
+  name: ziway-backend
+
+server:
+  http_port: "8081"
+  mode: release
+
+# BOS proxies to MBS. In k8s this is the MBS service DNS.
+ms:
+  addr: "ms.zt-ms.svc:8081"
+
+database:
+  driver: postgres
+  dsn: "host=localhost user=ziway password=ziway dbname=ziway port=5432 sslmode=disable TimeZone=Asia/Shanghai"
+  max_open_conns: 50
+  max_idle_conns: 10
+
+logger:
+  level: info
+  encoding: json
+
+kafka:
+  enabled: true
+  brokers:
+    - localhost:9092
+  topic_prefix: ziway
+
+grpc:
+  enabled: false
+  port: 9090

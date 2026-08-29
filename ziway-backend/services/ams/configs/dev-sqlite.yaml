@@ -1,0 +1,36 @@
+server:
+  http_port: 8080
+  grpc_port: 50051
+  mode: debug
+
+database:
+  driver: sqlite
+  sqlite_path: /tmp/ziway_ams.db
+  log_level: warn
+
+redis:
+  host: localhost
+  port: 6379
+  password: ""
+  db: 0
+  pool_size: 20
+
+dev_no_redis: true
+
+jwt:
+  private_key_path: configs/keys/private.pem
+  public_key_path: configs/keys/public.pem
+  access_token_ttl: 2h
+  refresh_token_ttl: 168h
+  issuer: ziway-ams
+
+casbin:
+  model_path: configs/rbac_model.conf
+
+log:
+  level: debug
+  format: console
+
+service:
+  name: ziway-ams
+  token: dev-service-token-change-in-prod

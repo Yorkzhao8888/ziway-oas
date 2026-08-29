@@ -1,0 +1,38 @@
+# ziway-backend P0 dev config (SQLite, zero external deps)
+# Copy to configs/dev-sqlite.yaml. Each process can override via env:
+#   ZIWAY_SERVER_HTTP_PORT=8080 ./bin/oas
+#   ZIWAY_SERVER_HTTP_PORT=8081 ./bin/ms
+#   ZIWAY_SERVER_HTTP_PORT=8082 ./bin/os
+
+app:
+  env: dev
+  name: ziway-backend
+
+server:
+  http_port: "8081"
+  mode: debug
+
+# BOS uses this to reverse-proxy /proxy/{ms}/* to the MBS process in P0.
+ms:
+  addr: "localhost:8081"
+
+database:
+  driver: sqlite
+  sqlite_path: data/ziway_p0.db
+  max_open_conns: 1
+  max_idle_conns: 1
+
+logger:
+  level: debug
+  encoding: console
+
+# P1 settings (unused in P0 but reserved)
+kafka:
+  enabled: false
+  brokers:
+    - localhost:9092
+  topic_prefix: ziway
+
+grpc:
+  enabled: false
+  port: 9090

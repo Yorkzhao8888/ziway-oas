@@ -1,0 +1,41 @@
+server:
+  http_port: 8080
+  grpc_port: 50051
+  mode: debug  # debug / release / test
+
+database:
+  host: localhost
+  port: 5432
+  user: ziway
+  password: ziway123
+  dbname: ziway_ams
+  sslmode: disable
+  max_idle_conns: 10
+  max_open_conns: 100
+  log_level: warn
+
+redis:
+  host: localhost
+  port: 6379
+  password: ""
+  db: 0
+  pool_size: 20
+
+jwt:
+  private_key_path: configs/keys/private.pem
+  public_key_path: configs/keys/public.pem
+  access_token_ttl: 2h
+  refresh_token_ttl: 168h  # 7天
+  issuer: ziway-ams
+
+casbin:
+  model_path: configs/rbac_model.conf
+
+log:
+  level: debug
+  format: console  # console / json
+  output: stdout
+
+service:
+  name: ziway-ams
+  token: dev-service-token-change-in-prod

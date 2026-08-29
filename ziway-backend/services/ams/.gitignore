@@ -1,0 +1,39 @@
+# Binaries
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+bin/
+ziway-ambs
+
+# Test
+*.test
+*.out
+coverage.txt
+
+# Config with secrets
+configs/keys/
+*.pem
+*.key
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Air
+tmp/
+*.tmp
+
+# Env
+.env
+.env.local
+
+# Docker
+data/
