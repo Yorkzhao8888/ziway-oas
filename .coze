@@ -2,12 +2,16 @@
 sub_id = "d9cc33f6"
 name = "ziway-backend"
 requires = ["golang-1.25"]
-project_type = "backend"
+project_type = "web"
 version = "0.0.35"
 entrypoint = "ziway-backend/cmd/oas/main.go"
 
 [preview]
-preview_enable = "disabled"
+preview_enable = "enabled"
+
+[dev]
+build = ["bash", "ziway-backend/scripts/build.sh"]
+run = ["bash", "ziway-backend/scripts/run.sh", "-p", "5000"]
 
 [deploy]
 build = ["bash", "ziway-backend/scripts/build.sh"]

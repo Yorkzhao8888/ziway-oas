@@ -1,7 +1,7 @@
 [project]
 sub_id = "d9cc33f6"
 name = "ziway-backend"
-project_type = "backend"
+project_type = "web"
 entrypoint = "cmd/oas/main.go"
 
 [deploy]
