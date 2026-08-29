@@ -3,7 +3,6 @@
 package ems
 
 import (
-	"fmt"
 	"time"
 
 	"github.com/gin-gonic/gin"

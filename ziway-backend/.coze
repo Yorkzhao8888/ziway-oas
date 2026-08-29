@@ -1,0 +1,13 @@
+[project]
+sub_id = "d9cc33f6"
+name = "ziway-backend"
+project_type = "backend"
+entrypoint = "cmd/ms/main.go"
+
+[deploy]
+build = ["bash", "scripts/build.sh"]
+run = ["bash", "scripts/run.sh", "-p", "5000"]
+
+[deploy.profile]
+kind = "service"
+flavor = "web"
