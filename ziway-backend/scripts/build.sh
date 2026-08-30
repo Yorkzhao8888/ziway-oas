@@ -5,32 +5,39 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$PROJECT_DIR"
 
-export GOPROXY=https://goproxy.cn,direct
-
-# Check if Go is installed, install if not
-if ! command -v go &> /dev/null; then
-    echo "Go not found, installing..."
-    if command -v apt-get &> /dev/null; then
-        apt-get update -qq && apt-get install -y -qq golang-go
-    elif command -v apk &> /dev/null; then
-        apk add --no-cache go
-    else
-        echo "ERROR: Cannot install Go - package manager not found"
-        exit 1
-    fi
-fi
-
-echo "Go version: $(go version)"
-
 mkdir -p bin
 
-echo "Building ziway-oas..."
-go build -o bin/oas ./cmd/oas/
+# Check if pre-compiled binaries exist in dist/
+if [ -f "dist/oas" ] && [ -f "dist/ms" ] && [ -f "dist/os" ]; then
+    echo "Using pre-compiled binaries from dist/"
+    cp dist/oas bin/oas
+    cp dist/ms bin/ms
+    cp dist/os bin/os
+    chmod +x bin/oas bin/ms bin/os
+    echo "Build complete (pre-compiled): bin/oas bin/ms bin/os"
+    exit 0
+fi
 
-echo "Building ziway-ms..."
-go build -o bin/ms ./cmd/ms/
-
-echo "Building ziway-os..."
-go build -o bin/os ./cmd/os/
-
-echo "Build complete: bin/oas bin/ms bin/os"
+# Fallback: compile from source if Go is available
+if command -v go &> /dev/null; then
+    export GOPROXY=https://goproxy.cn,direct
+    echo "Go found, compiling from source..."
+    echo "Go version: $(go version)"
+    
+    echo "Building ziway-oas..."
+    go build -o bin/oas ./cmd/oas/
+    
+    echo "Building ziway-ms..."
+    go build -o bin/ms ./cmd/ms/
+    
+    echo "Building ziway-os..."
+    go build -o bin/os ./cmd/os/
+    
+    echo "Build complete: bin/oas bin/ms bin/os"
+else
+    echo "ERROR: No pre-compiled binaries in dist/ and Go not found"
+    echo "Please either:"
+    echo "  1. Commit pre-compiled binaries to dist/"
+    echo "  2. Install Go compiler"
+    exit 1
+fi

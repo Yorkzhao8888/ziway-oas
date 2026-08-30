@@ -1,7 +1,6 @@
 [project]
 sub_id = "d9cc33f6"
 name = "ziway-backend"
-requires = ["golang-1.25"]
 project_type = "web"
 version = "0.0.35"
 entrypoint = "ziway-backend/cmd/oas/main.go"
