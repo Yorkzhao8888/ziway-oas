@@ -418,6 +418,7 @@ func main() {
 				{Username: "operator", DisplayName: "运营人员", Role: "AU", Password: "test123"},
 				{Username: "customer", DisplayName: "客户用户", Role: "CU", Password: "test123"},
 				{Username: "viewer", DisplayName: "访客", Role: "GU", Password: "test123"},
+				{Username: "em", DisplayName: "供给运营长", Role: "EM", Password: "test123"},
 			}
 			response.OK(c, gin.H{
 				"edition":  "beta",
@@ -724,6 +725,9 @@ func seedRBACPolicies(database *gorm.DB, log *zap.Logger) {
 		{"PU", "/api/v1/bos/eos/*", "*", "base", "*"},
 		// EU — EmployeeUser: employee resources
 		{"EU", "/api/v1/bos/hos/*", "*", "base", "*"},
+		// EM — EnterpriseManager: supply chain management (C1)
+		{"EM", "/api/v1/bos/*", "*", "base", "*"},
+		{"EM", "/api/v1/os/*/proxy/*", "*", "base", "*"},
 		// Hat roles
 		{"CX", "/api/v1/bos/cos/*", "*", "hat", "*"},
 		{"CX", "/api/v1/bos/dos/*", "*", "hat", "*"},
@@ -791,6 +795,7 @@ func seedTestUsers(database *gorm.DB, log *zap.Logger, edition string) {
 			testAccount{UserCode: "XHPZ#AU-TEST001", Username: "operator", DisplayName: "运营人员", IdentityType: "AU", RoleCode: "AU", RoleName: "Admin User"},
 			testAccount{UserCode: "XHPZ#CU-TEST001", Username: "customer", DisplayName: "客户用户", IdentityType: "CU", RoleCode: "CU", RoleName: "Customer User"},
 			testAccount{UserCode: "XHPZ#GU-TEST001", Username: "viewer", DisplayName: "访客", IdentityType: "GU", RoleCode: "GU", RoleName: "Guest User"},
+			testAccount{UserCode: "XHPZ#EM-TEST001", Username: "em", DisplayName: "供给运营长", IdentityType: "EM", RoleCode: "EM", RoleName: "Enterprise Manager"},
 		)
 		log.Info("beta edition: seeding multiple test accounts")
 	}
