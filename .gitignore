@@ -1,5 +1,6 @@
 node_modules
 dist
+!ziway-backend/dist/
 .DS_Store
 *.swp
 .git/*
