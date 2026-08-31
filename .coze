@@ -3,7 +3,8 @@ sub_id = "d9cc33f6"
 name = "ziway-backend"
 project_type = "web"
 version = "0.0.35"
-entrypoint = "ziway-backend/cmd/oas/main.go"
+requires = ["golang-1.25"]
+entrypoint = "ziway-backend/bin/oas"
 
 [preview]
 preview_enable = "enabled"
