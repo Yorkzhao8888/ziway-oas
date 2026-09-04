@@ -1,7 +1,12 @@
 package main
 
 import (
+	"crypto/rsa"
+	"crypto/x509"
+	"encoding/base64"
+	"encoding/pem"
 	"fmt"
+	"math/big"
 	"os"
 	"strings"
 	"time"
@@ -208,6 +213,7 @@ func main() {
 
 	// ===== Auth (public, no JWT required) =====
 	var jwtIssuer *jwt.Issuer
+	var jwtPublicKey *rsa.PublicKey
 	if pkPath := v.GetString("jwt.private_key_path"); pkPath != "" {
 		accessTTL := v.GetDuration("jwt.access_ttl")
 		if accessTTL == 0 {
@@ -219,7 +225,66 @@ func main() {
 		}
 		jwtIssuer = issuer
 		log.Info("JWT issuer initialized", zap.String("private_key", pkPath))
+
+		// Load public key for verification endpoints
+		pubKeyPath := v.GetString("jwt.public_key_path")
+		if pubKeyPath != "" {
+			pubData, err := os.ReadFile(pubKeyPath)
+			if err == nil {
+				block, _ := pem.Decode(pubData)
+				if block != nil {
+					pub, err := x509.ParsePKIXPublicKey(block.Bytes)
+					if err == nil {
+						if rsaPub, ok := pub.(*rsa.PublicKey); ok {
+							jwtPublicKey = rsaPub
+							log.Info("JWT public key loaded", zap.String("path", pubKeyPath))
+						}
+					}
+				}
+			}
+		}
 	}
+
+	// GET /api/v1/auth/public-key — return PEM for RS256 verification
+	api.GET("/auth/public-key", func(c *gin.Context) {
+		pubKeyPath := v.GetString("jwt.public_key_path")
+		if pubKeyPath == "" {
+			response.InternalError(c, "public key not configured")
+			return
+		}
+		pubData, err := os.ReadFile(pubKeyPath)
+		if err != nil {
+			response.InternalError(c, "failed to read public key")
+			return
+		}
+		response.OK(c, gin.H{
+			"algorithm": "RS256",
+			"key_type":  "RSA",
+			"format":    "PEM",
+			"public_key": string(pubData),
+			"issuer":    v.GetString("jwt.issuer"),
+		})
+	})
+
+	// GET /.well-known/jwks.json — standard JWK Set endpoint
+	r.GET("/.well-known/jwks.json", func(c *gin.Context) {
+		if jwtPublicKey == nil {
+			c.JSON(500, gin.H{"error": "public key not available"})
+			return
+		}
+		// Convert RSA public key to JWK format
+		nBytes := jwtPublicKey.N.Bytes()
+		eBytes := big.NewInt(int64(jwtPublicKey.E)).Bytes()
+		jwk := gin.H{
+			"kty": "RSA",
+			"use": "sig",
+			"alg": "RS256",
+			"kid": "oas-rsa-001",
+			"n":   base64.RawURLEncoding.EncodeToString(nBytes),
+			"e":   base64.RawURLEncoding.EncodeToString(eBytes),
+		}
+		c.JSON(200, gin.H{"keys": []gin.H{jwk}})
+	})
 
 	// POST /api/v1/os/:os/proxy/ams/auth/login — unified login, returns real JWT
 	api.POST("/os/:os/proxy/ams/auth/login", func(c *gin.Context) {
