@@ -693,6 +693,267 @@ func main() {
 	}
 	seedTestUsers(database, log, edition)
 
+	// ===== Login Page (GET /login) =====
+	r.GET("/login", func(c *gin.Context) {
+		redirect := c.Query("redirect")
+		c.Header("Content-Type", "text/html; charset=utf-8")
+		c.String(200, loginPageHTML(redirect, edition))
+	})
+
+	// ===== POST /api/v1/auth/login — username+password login =====
+	api.POST("/auth/login", func(c *gin.Context) {
+		if jwtIssuer == nil {
+			response.InternalError(c, "jwt issuer not configured")
+			return
+		}
+		var req struct {
+			Username string `json:"username" binding:"required"`
+			Password string `json:"password" binding:"required"`
+		}
+		if err := c.ShouldBindJSON(&req); err != nil {
+			response.BadRequest(c, "username and password required")
+			return
+		}
+		var user OASUser
+		if err := database.Where("username = ?", req.Username).First(&user).Error; err != nil {
+			response.Unauthorized(c, "invalid credentials")
+			return
+		}
+		if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(req.Password)); err != nil {
+			response.Unauthorized(c, "invalid credentials")
+			return
+		}
+		if user.Status != "active" {
+			response.Forbidden(c, "account disabled")
+			return
+		}
+		now := time.Now()
+		database.Model(&user).Update("last_login_at", &now)
+		var roles []string
+		database.Table("user_roles").
+			Select("r.role_code").
+			Joins("JOIN roles r ON r.id = user_roles.role_id").
+			Where("user_roles.user_id = ?", user.ID).
+			Pluck("r.role_code", &roles)
+		activeRole := ""
+		if len(roles) > 0 {
+			activeRole = roles[0]
+		}
+		claims := &jwt.Claims{
+			UserID:       user.UserCode,
+			IdentityID:   user.UserCode,
+			IdentityType: map[string]string{"H": "human", "N": "nhi"}[user.EntityType],
+			Role:         activeRole,
+			SubRole:      "",
+			NHIFlag:      user.EntityType == "N",
+			MSAccess:     []string{"ams", "cms", "dms", "hms", "fms", "tms", "ems", "gms", "oms", "vms", "ims", "sms"},
+			Roles:        roles,
+			ActiveRole:   activeRole,
+			TokenID:      fmt.Sprintf("login-%d-%d", user.ID, now.Unix()),
+		}
+		token, ttl, err := jwtIssuer.IssueAccessToken(claims)
+		if err != nil {
+			response.InternalError(c, "failed to issue token")
+			return
+		}
+		database.Create(&AuditLog{
+			UserID:   user.UserCode,
+			UserName: user.DisplayName,
+			Plane:    "admin",
+			Action:   "auth.login",
+			Resource: "jwt",
+			Detail:   fmt.Sprintf("result=success, role=%s, token_id=%s", activeRole, claims.TokenID),
+		})
+		response.OK(c, gin.H{
+			"access_token": token,
+			"token_type":   "Bearer",
+			"expires_in":   ttl,
+			"identity_id":  user.UserCode,
+			"role":         activeRole,
+			"username":     user.Username,
+		})
+	})
+
+	// ===== User Management API (/api/v1/admin/users/*) =====
+	admin.GET("/users", func(c *gin.Context) {
+		type UserVO struct {
+			ID          uint64   `json:"id"`
+			UserCode    string   `json:"user_code"`
+			Username    string   `json:"username"`
+			DisplayName string   `json:"display_name"`
+			Status      string   `json:"status"`
+			Roles       []string `json:"roles"`
+			LastLoginAt *string  `json:"last_login_at,omitempty"`
+			CreatedAt   string   `json:"created_at"`
+		}
+		var users []OASUser
+		database.Order("created_at DESC").Find(&users)
+		var result []UserVO
+		for _, u := range users {
+			var roles []string
+			database.Table("user_roles").
+				Select("r.role_code").
+				Joins("JOIN roles r ON r.id = user_roles.role_id").
+				Where("user_roles.user_id = ?", u.ID).
+				Pluck("r.role_code", &roles)
+			vo := UserVO{
+				ID:          u.ID,
+				UserCode:    u.UserCode,
+				Username:    u.Username,
+				DisplayName: u.DisplayName,
+				Status:      u.Status,
+				Roles:       roles,
+				CreatedAt:   u.CreatedAt.Format(time.RFC3339),
+			}
+			if u.LastLoginAt != nil {
+				s := u.LastLoginAt.Format(time.RFC3339)
+				vo.LastLoginAt = &s
+			}
+			result = append(result, vo)
+		}
+		response.OK(c, gin.H{"items": result, "total": len(result)})
+	})
+
+	admin.POST("/users", func(c *gin.Context) {
+		var req struct {
+			Username    string   `json:"username" binding:"required"`
+			Password    string   `json:"password" binding:"required"`
+			DisplayName string   `json:"display_name"`
+			RoleCode    string   `json:"role_code" binding:"required"`
+			Roles       []string `json:"roles"`
+		}
+		if err := c.ShouldBindJSON(&req); err != nil {
+			response.BadRequest(c, "username, password, role_code required")
+			return
+		}
+		var existing OASUser
+		if database.Where("username = ?", req.Username).First(&existing).Error == nil {
+			response.BadRequest(c, "username already exists")
+			return
+		}
+		hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
+		if err != nil {
+			response.InternalError(c, "failed to hash password")
+			return
+		}
+		displayName := req.DisplayName
+		if displayName == "" {
+			displayName = req.Username
+		}
+		userCode := fmt.Sprintf("XHPZ#%s-%d", req.RoleCode, time.Now().UnixNano()%100000)
+		user := OASUser{
+			UserCode:     userCode,
+			Username:     req.Username,
+			PasswordHash: string(hash),
+			DisplayName:  displayName,
+			IdentityType: req.RoleCode,
+			EntityType:   "H",
+			Status:       "active",
+		}
+		if err := database.Create(&user).Error; err != nil {
+			response.BadRequest(c, "create user failed: "+err.Error())
+			return
+		}
+		roleCodes := req.Roles
+		if len(roleCodes) == 0 {
+			roleCodes = []string{req.RoleCode}
+		}
+		for _, rc := range roleCodes {
+			var role OASRole
+			if database.Where("role_code = ?", rc).First(&role).Error == nil {
+				database.Table("user_roles").Create(&OASUserRole{
+					UserID:    user.ID,
+					RoleID:    role.ID,
+					GrantedBy: "admin",
+					GrantedAt: time.Now(),
+				})
+			}
+		}
+		database.Create(&AuditLog{
+			Plane:    "admin",
+			Action:   "user.create",
+			UserID:   user.UserCode,
+			UserName: user.DisplayName,
+			Resource: "user",
+			Detail:   fmt.Sprintf("username=%s, roles=%v", req.Username, roleCodes),
+		})
+		response.Created(c, gin.H{"id": user.ID, "username": user.Username, "user_code": user.UserCode})
+	})
+
+	admin.PUT("/users/:id/roles", func(c *gin.Context) {
+		var req struct {
+			Roles []string `json:"roles" binding:"required"`
+		}
+		if err := c.ShouldBindJSON(&req); err != nil {
+			response.BadRequest(c, "roles required")
+			return
+		}
+		id, _ := parseUint(c.Param("id"))
+		database.Where("user_id = ?", id).Delete(&OASUserRole{})
+		for _, rc := range req.Roles {
+			var role OASRole
+			if database.Where("role_code = ?", rc).First(&role).Error == nil {
+				database.Table("user_roles").Create(&OASUserRole{
+					UserID:    id,
+					RoleID:    role.ID,
+					GrantedBy: "admin",
+					GrantedAt: time.Now(),
+				})
+			}
+		}
+		database.Create(&AuditLog{
+			Plane:    "admin",
+			Action:   "user.update_roles",
+			Resource: "user",
+			Detail:   fmt.Sprintf("user_id=%d, roles=%v", id, req.Roles),
+		})
+		response.OK(c, nil)
+	})
+
+	admin.PUT("/users/:id/status", func(c *gin.Context) {
+		var req struct {
+			Status string `json:"status" binding:"required"`
+		}
+		if err := c.ShouldBindJSON(&req); err != nil {
+			response.BadRequest(c, "status required")
+			return
+		}
+		if req.Status != "active" && req.Status != "disabled" {
+			response.BadRequest(c, "status must be active or disabled")
+			return
+		}
+		id, _ := parseUint(c.Param("id"))
+		database.Model(&OASUser{}).Where("id = ?", id).Update("status", req.Status)
+		database.Create(&AuditLog{
+			Plane:    "admin",
+			Action:   "user.update_status",
+			Resource: "user",
+			Detail:   fmt.Sprintf("user_id=%d, status=%s", id, req.Status),
+		})
+		response.OK(c, nil)
+	})
+
+	// GET /api/v1/auth/roles — list available roles
+	api.GET("/auth/roles", func(c *gin.Context) {
+		var roles []OASRole
+		database.Order("role_code").Find(&roles)
+		type RoleVO struct {
+			Code string `json:"code"`
+			Name string `json:"name"`
+		}
+		var result []RoleVO
+		for _, r := range roles {
+			result = append(result, RoleVO{Code: r.RoleCode, Name: r.Name})
+		}
+		response.OK(c, result)
+	})
+
+	// ===== User Management Page (GET /admin/users) =====
+	r.GET("/admin/users", func(c *gin.Context) {
+		c.Header("Content-Type", "text/html; charset=utf-8")
+		c.String(200, userMgmtPageHTML())
+	})
+
 	port := v.GetString("server.http_port")
 	if port == "" {
 		port = "8080"
@@ -925,4 +1186,213 @@ func seedTestUsers(database *gorm.DB, log *zap.Logger, edition string) {
 	})
 
 	log.Info("test users seeded", zap.String("edition", edition), zap.Int("count", len(accounts)))
+}
+
+// loginPageHTML returns the login page HTML.
+func loginPageHTML(redirect, edition string) string {
+	quickLoginSection := ""
+	if edition == "beta" {
+		quickLoginSection = `
+		<div style="margin-top:24px;padding-top:20px;border-top:1px solid #e5e7eb">
+			<p style="font-size:13px;color:#6b7280;margin-bottom:12px">内测快捷登录</p>
+			<div style="display:flex;gap:8px;flex-wrap:wrap">
+				<button onclick="quickLogin('SU')" style="padding:6px 14px;border:1px solid #d1d5db;border-radius:6px;background:#f9fafb;cursor:pointer;font-size:13px">SU 管理员</button>
+				<button onclick="quickLogin('AU')" style="padding:6px 14px;border:1px solid #d1d5db;border-radius:6px;background:#f9fafb;cursor:pointer;font-size:13px">AU 运营</button>
+				<button onclick="quickLogin('CU')" style="padding:6px 14px;border:1px solid #d1d5db;border-radius:6px;background:#f9fafb;cursor:pointer;font-size:13px">CU 客户</button>
+				<button onclick="quickLogin('GU')" style="padding:6px 14px;border:1px solid #d1d5db;border-radius:6px;background:#f9fafb;cursor:pointer;font-size:13px">GU 访客</button>
+				<button onclick="quickLogin('EM')" style="padding:6px 14px;border:1px solid #d1d5db;border-radius:6px;background:#f9fafb;cursor:pointer;font-size:13px">EM 供给</button>
+			</div>
+		</div>`
+	}
+	redirectAttr := ""
+	if redirect != "" {
+		redirectAttr = `data-redirect="` + redirect + `"`
+	}
+	return `<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>OAS Login</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:#f3f4f6;display:flex;align-items:center;justify-content:center;min-height:100vh}
+.card{background:#fff;border-radius:12px;box-shadow:0 1px 3px rgba(0,0,0,.1);padding:40px;width:100%;max-width:400px}
+h1{font-size:20px;font-weight:600;margin-bottom:4px;color:#111827}
+.sub{font-size:13px;color:#6b7280;margin-bottom:24px}
+label{display:block;font-size:13px;font-weight:500;color:#374151;margin-bottom:4px}
+input{width:100%;padding:10px 12px;border:1px solid #d1d5db;border-radius:8px;font-size:14px;margin-bottom:16px;outline:none;transition:border .15s}
+input:focus{border-color:#2563eb;box-shadow:0 0 0 3px rgba(37,99,235,.1)}
+.btn{width:100%;padding:10px;border:none;border-radius:8px;background:#2563eb;color:#fff;font-size:14px;font-weight:500;cursor:pointer;transition:background .15s}
+.btn:hover{background:#1d4ed8}
+.btn:disabled{background:#93c5fd;cursor:not-allowed}
+.err{color:#dc2626;font-size:13px;margin-top:8px;display:none}
+</style>
+</head>
+<body>
+<div class="card" id="form" ` + redirectAttr + `>
+	<h1>知味 OAS</h1>
+	<p class="sub">统一身份认证</p>
+	<form onsubmit="return doLogin(event)">
+		<label for="username">用户名</label>
+		<input id="username" name="username" autocomplete="username" required>
+		<label for="password">密码</label>
+		<input id="password" name="password" type="password" autocomplete="current-password" required>
+		<button class="btn" type="submit" id="submitBtn">登录</button>
+		<p class="err" id="errMsg"></p>
+	</form>` + quickLoginSection + `
+</div>
+<script>
+async function doLogin(e){
+	e.preventDefault();
+	const btn=document.getElementById('submitBtn');
+	const err=document.getElementById('errMsg');
+	btn.disabled=true;err.style.display='none';
+	try{
+		const r=await fetch('/api/v1/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},
+			body:JSON.stringify({username:document.getElementById('username').value,password:document.getElementById('password').value})});
+		const d=await r.json();
+		if(d.code!==200)throw new Error(d.message||'login failed');
+		handleToken(d.data);
+	}catch(ex){err.textContent=ex.message;err.style.display='block';btn.disabled=false}
+}
+async function quickLogin(role){
+	const btn=document.getElementById('submitBtn');
+	btn.disabled=true;
+	try{
+		const r=await fetch('/api/v1/auth/quick-login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({role})});
+		const d=await r.json();
+		if(d.code!==200)throw new Error(d.message||'quick login failed');
+		handleToken(d.data);
+	}catch(ex){alert(ex.message);btn.disabled=false}
+}
+function handleToken(data){
+	const redirect=document.getElementById('form').dataset.redirect;
+	if(redirect){
+		const sep=redirect.includes('?')?'&':'?';
+		window.location.href=redirect+sep+'token='+data.access_token;
+	}else{
+		document.getElementById('form').innerHTML='<h1>登录成功</h1><p class="sub">角色: '+data.role+'</p><pre style="font-size:11px;word-break:break-all;background:#f9fafb;padding:12px;border-radius:8px;margin-top:12px;max-height:200px;overflow:auto">'+data.access_token+'</pre><p style="margin-top:12px;font-size:13px;color:#6b7280">Token 有效期: '+data.expires_in+'s</p>';
+	}
+}
+</script>
+</body>
+</html>`
+}
+
+// userMgmtPageHTML returns the user management page HTML.
+func userMgmtPageHTML() string {
+	return `<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>OAS User Management</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:#f3f4f6;color:#111827}
+.header{background:#fff;border-bottom:1px solid #e5e7eb;padding:16px 24px;display:flex;align-items:center;justify-content:space-between}
+.header h1{font-size:18px;font-weight:600}
+.container{max-width:960px;margin:24px auto;padding:0 24px}
+.card{background:#fff;border-radius:10px;box-shadow:0 1px 2px rgba(0,0,0,.06);padding:24px;margin-bottom:20px}
+.card h2{font-size:16px;font-weight:600;margin-bottom:16px}
+table{width:100%;border-collapse:collapse;font-size:14px}
+th{text-align:left;padding:10px 12px;border-bottom:2px solid #e5e7eb;font-weight:600;color:#6b7280;font-size:12px;text-transform:uppercase}
+td{padding:10px 12px;border-bottom:1px solid #f3f4f6}
+.badge{display:inline-block;padding:2px 8px;border-radius:9999px;font-size:12px;font-weight:500}
+.badge-active{background:#d1fae5;color:#065f46}
+.badge-disabled{background:#fee2e2;color:#991b1b}
+.badge-role{background:#e0e7ff;color:#3730a3;margin-right:4px}
+.btn{padding:6px 14px;border:none;border-radius:6px;font-size:13px;cursor:pointer;font-weight:500}
+.btn-primary{background:#2563eb;color:#fff}.btn-primary:hover{background:#1d4ed8}
+.btn-danger{background:#fee2e2;color:#991b1b}.btn-danger:hover{background:#fecaca}
+.btn-success{background:#d1fae5;color:#065f46}.btn-success:hover{background:#a7f3d0}
+.btn-sm{padding:4px 10px;font-size:12px}
+.form-row{display:flex;gap:12px;margin-bottom:12px}
+.form-row>div{flex:1}
+.form-row label{display:block;font-size:12px;font-weight:500;color:#6b7280;margin-bottom:4px}
+.form-row input,.form-row select{width:100%;padding:8px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:13px}
+.modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:100;align-items:center;justify-content:center}
+.modal-overlay.show{display:flex}
+.modal{background:#fff;border-radius:12px;padding:24px;width:100%;max-width:420px}
+.modal h3{font-size:16px;margin-bottom:16px}
+.empty{text-align:center;padding:40px;color:#9ca3af;font-size:14px}
+</style>
+</head>
+<body>
+<div class="header">
+	<h1>知味 OAS 用户管理</h1>
+	<a href="/login" style="font-size:13px;color:#6b7280;text-decoration:none">← 返回登录</a>
+</div>
+<div class="container">
+	<div class="card">
+		<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+			<h2>用户列表</h2>
+			<button class="btn btn-primary" onclick="showAddModal()">+ 新增用户</button>
+		</div>
+		<div id="userTable"><div class="empty">加载中...</div></div>
+	</div>
+</div>
+
+<div class="modal-overlay" id="addModal">
+	<div class="modal">
+		<h3>新增用户</h3>
+		<div class="form-row"><div><label>用户名</label><input id="newUsername" required></div></div>
+		<div class="form-row"><div><label>密码</label><input id="newPassword" type="password" required></div></div>
+		<div class="form-row"><div><label>显示名</label><input id="newDisplayName"></div></div>
+		<div class="form-row"><div><label>角色</label><select id="newRole"></select></div></div>
+		<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
+			<button class="btn" style="background:#f3f4f6" onclick="hideAddModal()">取消</button>
+			<button class="btn btn-primary" onclick="createUser()">创建</button>
+		</div>
+	</div>
+</div>
+
+<script>
+const API='/api/v1';
+async function loadUsers(){
+	const r=await fetch(API+'/admin/users');
+	const d=await r.json();
+	const items=d.data.items||[];
+	if(!items.length){document.getElementById('userTable').innerHTML='<div class="empty">暂无用户</div>';return}
+	let html='<table><thead><tr><th>用户名</th><th>显示名</th><th>角色</th><th>状态</th><th>操作</th></tr></thead><tbody>';
+	for(const u of items){
+		const roles=u.roles.map(r=>'<span class="badge badge-role">'+r+'</span>').join('');
+		const status=u.status==='active'?'<span class="badge badge-active">启用</span>':'<span class="badge badge-disabled">禁用</span>';
+		const toggleBtn=u.status==='active'
+			?'<button class="btn btn-danger btn-sm" onclick="toggleStatus('+u.id+',\'disabled\')">禁用</button>'
+			:'<button class="btn btn-success btn-sm" onclick="toggleStatus('+u.id+',\'active\')">启用</button>';
+		html+='<tr><td>'+u.username+'</td><td>'+u.display_name+'</td><td>'+roles+'</td><td>'+status+'</td><td>'+toggleBtn+'</td></tr>';
+	}
+	html+='</tbody></table>';
+	document.getElementById('userTable').innerHTML=html;
+}
+async function loadRoles(){
+	const r=await fetch(API+'/auth/roles');
+	const d=await r.json();
+	const sel=document.getElementById('newRole');
+	sel.innerHTML='';
+	for(const role of d.data){sel.innerHTML+='<option value="'+role.code+'">'+role.code+' - '+role.name+'</option>'}
+}
+function showAddModal(){document.getElementById('addModal').classList.add('show');loadRoles()}
+function hideAddModal(){document.getElementById('addModal').classList.remove('show')}
+async function createUser(){
+	const body={
+		username:document.getElementById('newUsername').value,
+		password:document.getElementById('newPassword').value,
+		display_name:document.getElementById('newDisplayName').value,
+		role_code:document.getElementById('newRole').value
+	};
+	const r=await fetch(API+'/admin/users',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+	const d=await r.json();
+	if(d.code===201||d.code===200){hideAddModal();loadUsers()}else{alert(d.message||'create failed')}
+}
+async function toggleStatus(id,status){
+	await fetch(API+'/admin/users/'+id+'/status',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({status})});
+	loadUsers();
+}
+loadUsers();
+</script>
+</body>
+</html>`
 }
