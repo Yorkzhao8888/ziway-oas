@@ -67,6 +67,7 @@ func JWTAuth(verifier *jwt.Verifier, rdb *redis.Client, logger *zap.Logger) gin.
 		c.Set("roles", claims.Roles)
 		c.Set("active_role", claims.ActiveRole)
 		c.Set("domain", claims.Domain)
+		c.Set("username", claims.Username)
 		c.Set("token_jti", claims.TokenID)
 		if claims.IdentityType == "nhi" {
 			c.Set("agent_service", claims.AgentService)
@@ -88,6 +89,24 @@ func RequireRoles(allowedRoles ...string) gin.HandlerFunc {
 		role, _ := activeRole.(string)
 		if _, ok := roleSet[role]; !ok {
 			response.Forbidden(c, "insufficient permissions")
+			c.Abort()
+			return
+		}
+		c.Next()
+	}
+}
+
+// RequireUsers 仅允许指定用户名访问，否则 403。
+func RequireUsers(allowedUsers ...string) gin.HandlerFunc {
+	userSet := make(map[string]struct{}, len(allowedUsers))
+	for _, u := range allowedUsers {
+		userSet[u] = struct{}{}
+	}
+	return func(c *gin.Context) {
+		username, _ := c.Get("username")
+		user, _ := username.(string)
+		if _, ok := userSet[user]; !ok {
+			response.Forbidden(c, "access denied")
 			c.Abort()
 			return
 		}

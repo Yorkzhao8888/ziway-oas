@@ -342,6 +342,7 @@ func main() {
 			UserID:       user.UserCode,
 			IdentityID:   user.UserCode,
 			IdentityType: map[string]string{"H": "human", "N": "nhi"}[user.EntityType],
+			Username:     user.Username,
 			Role:         activeRole,
 			SubRole:      "",
 			NHIFlag:      nhiFlag,
@@ -442,6 +443,7 @@ func main() {
 				UserID:       user.UserCode,
 				IdentityID:   user.UserCode,
 				IdentityType: map[string]string{"H": "human", "N": "nhi"}[user.EntityType],
+				Username:     user.Username,
 				Role:         activeRole,
 				SubRole:      "",
 				NHIFlag:      user.EntityType == "N",
@@ -752,6 +754,7 @@ func main() {
 			UserID:       user.UserCode,
 			IdentityID:   user.UserCode,
 			IdentityType: map[string]string{"H": "human", "N": "nhi"}[user.EntityType],
+			Username:     user.Username,
 			Role:         activeRole,
 			SubRole:      "",
 			NHIFlag:      user.EntityType == "N",
@@ -787,7 +790,7 @@ func main() {
 	adminUsers := api.Group("/admin")
 	if jwtVerifier != nil {
 		adminUsers.Use(middleware.JWTAuth(jwtVerifier, nil, log))
-		adminUsers.Use(middleware.RequireRoles("SU", "AU"))
+		adminUsers.Use(middleware.RequireUsers("oas-ou-admin", "oas-au-admin"))
 	}
 	adminUsers.GET("/users", func(c *gin.Context) {
 		type UserVO struct {
@@ -983,8 +986,8 @@ func main() {
 			c.Redirect(302, "/login?redirect=/admin/users")
 			return
 		}
-		if claims.ActiveRole != "SU" && claims.ActiveRole != "AU" {
-			response.Forbidden(c, "insufficient permissions")
+		if claims.Username != "oas-ou-admin" && claims.Username != "oas-au-admin" {
+			response.Forbidden(c, "access denied")
 			return
 		}
 		c.Header("Content-Type", "text/html; charset=utf-8")
@@ -1124,19 +1127,64 @@ func seedRBACPolicies(database *gorm.DB, log *zap.Logger) {
 // seedTestUsers creates test accounts based on product edition.
 // Beta edition: multiple test accounts with different roles (SU/AU/CU/GU)
 // Production edition: only admin account
+// Admin accounts (oas-ou-admin, oas-au-admin) are always created.
 func seedTestUsers(database *gorm.DB, log *zap.Logger, edition string) {
-	var count int64
-	database.Model(&OASUser{}).Count(&count)
-	if count > 0 {
-		return
-	}
-
 	hash, err := bcrypt.GenerateFromPassword([]byte("test123"), bcrypt.DefaultCost)
 	if err != nil {
 		log.Error("failed to hash test password", zap.Error(err))
 		return
 	}
 	hashStr := string(hash)
+
+	// 最高管理者账号（始终创建，用于用户管理接口鉴权）
+	adminAccounts := []struct {
+		UserCode     string
+		Username     string
+		DisplayName  string
+		IdentityType string
+		RoleCode     string
+		RoleName     string
+	}{
+		{UserCode: "XHPZ#OU-ADMIN", Username: "oas-ou-admin", DisplayName: "OAS 组织管理员", IdentityType: "OU", RoleCode: "SU", RoleName: "System User"},
+		{UserCode: "XHPZ#AU-ADMIN", Username: "oas-au-admin", DisplayName: "OAS 运营管理员", IdentityType: "AU", RoleCode: "SU", RoleName: "System User"},
+	}
+
+	// 确保 SU 角色存在
+	var suRole OASRole
+	database.Where("role_code = ?", "SU").First(&suRole)
+	if suRole.ID == 0 {
+		suRole = OASRole{RoleCode: "SU", Name: "System User", Description: "System User role"}
+		database.Create(&suRole)
+	}
+
+	// 创建管理员账号（如果不存在）
+	for _, acc := range adminAccounts {
+		var existing OASUser
+		database.Where("username = ?", acc.Username).First(&existing)
+		if existing.ID == 0 {
+			user := OASUser{
+				UserCode:     acc.UserCode,
+				Username:     acc.Username,
+				PasswordHash: hashStr,
+				DisplayName:  acc.DisplayName,
+				IdentityType: acc.IdentityType,
+				EntityType:   "H",
+				Status:       "active",
+			}
+			if err := database.Create(&user).Error; err == nil {
+				assignment := OASUserRole{UserID: user.ID, RoleID: suRole.ID, GrantedBy: "system-seed", GrantedAt: time.Now()}
+				database.Table("user_roles").Create(&assignment)
+				log.Info("admin user created", zap.String("username", acc.Username))
+			}
+		}
+	}
+
+	// 检查是否已有其他用户
+	var count int64
+	database.Model(&OASUser{}).Count(&count)
+	if count > 2 { // 已有除管理员外的用户
+		return
+	}
 
 	// Define test accounts for beta edition
 	type testAccount struct {
@@ -1149,6 +1197,7 @@ func seedTestUsers(database *gorm.DB, log *zap.Logger, edition string) {
 	}
 
 	accounts := []testAccount{
+		// 默认测试账号
 		{UserCode: "XHPZ#SU-TEST001", Username: "admin", DisplayName: "系统管理员", IdentityType: "SU", RoleCode: "SU", RoleName: "System User"},
 	}
 

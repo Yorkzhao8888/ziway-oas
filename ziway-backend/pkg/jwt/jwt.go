@@ -14,6 +14,7 @@ type Claims struct {
 	UserID       string   `json:"user_id"`
 	IdentityID   string   `json:"identity_id"`
 	IdentityType string   `json:"identity_type"` // human / nhi
+	Username     string   `json:"username,omitempty"`
 	Role         string   `json:"role"`
 	SubRole      string   `json:"sub_role"`
 	NHIFlag      bool     `json:"nhi_flag"`
