@@ -213,6 +213,7 @@ func main() {
 
 	// ===== Auth (public, no JWT required) =====
 	var jwtIssuer *jwt.Issuer
+	var jwtVerifier *jwt.Verifier
 	var jwtPublicKey *rsa.PublicKey
 	if pkPath := v.GetString("jwt.private_key_path"); pkPath != "" {
 		accessTTL := v.GetDuration("jwt.access_ttl")
@@ -241,6 +242,14 @@ func main() {
 						}
 					}
 				}
+			}
+			// Init verifier for admin auth middleware
+			verifier, err := jwt.NewVerifier(pubKeyPath)
+			if err != nil {
+				log.Error("failed to init JWT verifier", zap.Error(err))
+			} else {
+				jwtVerifier = verifier
+				log.Info("JWT verifier initialized")
 			}
 		}
 	}
@@ -774,8 +783,13 @@ func main() {
 		})
 	})
 
-	// ===== User Management API (/api/v1/admin/users/*) =====
-	admin.GET("/users", func(c *gin.Context) {
+	// ===== User Management API (/api/v1/admin/users/*) — JWT + SU/AU only =====
+	adminUsers := api.Group("/admin")
+	if jwtVerifier != nil {
+		adminUsers.Use(middleware.JWTAuth(jwtVerifier, nil, log))
+		adminUsers.Use(middleware.RequireRoles("SU", "AU"))
+	}
+	adminUsers.GET("/users", func(c *gin.Context) {
 		type UserVO struct {
 			ID          uint64   `json:"id"`
 			UserCode    string   `json:"user_code"`
@@ -814,7 +828,7 @@ func main() {
 		response.OK(c, gin.H{"items": result, "total": len(result)})
 	})
 
-	admin.POST("/users", func(c *gin.Context) {
+	adminUsers.POST("/users", func(c *gin.Context) {
 		var req struct {
 			Username    string   `json:"username" binding:"required"`
 			Password    string   `json:"password" binding:"required"`
@@ -880,7 +894,7 @@ func main() {
 		response.Created(c, gin.H{"id": user.ID, "username": user.Username, "user_code": user.UserCode})
 	})
 
-	admin.PUT("/users/:id/roles", func(c *gin.Context) {
+	adminUsers.PUT("/users/:id/roles", func(c *gin.Context) {
 		var req struct {
 			Roles []string `json:"roles" binding:"required"`
 		}
@@ -910,7 +924,7 @@ func main() {
 		response.OK(c, nil)
 	})
 
-	admin.PUT("/users/:id/status", func(c *gin.Context) {
+	adminUsers.PUT("/users/:id/status", func(c *gin.Context) {
 		var req struct {
 			Status string `json:"status" binding:"required"`
 		}
@@ -948,8 +962,31 @@ func main() {
 		response.OK(c, result)
 	})
 
-	// ===== User Management Page (GET /admin/users) =====
+	// ===== User Management Page (GET /admin/users) — JWT required =====
 	r.GET("/admin/users", func(c *gin.Context) {
+		if jwtVerifier == nil {
+			response.InternalError(c, "jwt verifier not configured")
+			return
+		}
+		authHeader := c.GetHeader("Authorization")
+		if authHeader == "" {
+			c.Redirect(302, "/login?redirect=/admin/users")
+			return
+		}
+		parts := strings.SplitN(authHeader, " ", 2)
+		if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
+			c.Redirect(302, "/login?redirect=/admin/users")
+			return
+		}
+		claims, err := jwtVerifier.Verify(parts[1])
+		if err != nil {
+			c.Redirect(302, "/login?redirect=/admin/users")
+			return
+		}
+		if claims.ActiveRole != "SU" && claims.ActiveRole != "AU" {
+			response.Forbidden(c, "insufficient permissions")
+			return
+		}
 		c.Header("Content-Type", "text/html; charset=utf-8")
 		c.String(200, userMgmtPageHTML())
 	})

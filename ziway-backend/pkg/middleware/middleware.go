@@ -76,6 +76,25 @@ func JWTAuth(verifier *jwt.Verifier, rdb *redis.Client, logger *zap.Logger) gin.
 	}
 }
 
+// RequireRoles 角色鉴权中间件，必须在 JWTAuth 之后使用。
+// 仅当 active_role 在 allowedRoles 中时放行，否则 403。
+func RequireRoles(allowedRoles ...string) gin.HandlerFunc {
+	roleSet := make(map[string]struct{}, len(allowedRoles))
+	for _, r := range allowedRoles {
+		roleSet[r] = struct{}{}
+	}
+	return func(c *gin.Context) {
+		activeRole, _ := c.Get("active_role")
+		role, _ := activeRole.(string)
+		if _, ok := roleSet[role]; !ok {
+			response.Forbidden(c, "insufficient permissions")
+			c.Abort()
+			return
+		}
+		c.Next()
+	}
+}
+
 // ServiceToken 服务间调用认证
 func ServiceToken(token string, logger *zap.Logger) gin.HandlerFunc {
 	return func(c *gin.Context) {
