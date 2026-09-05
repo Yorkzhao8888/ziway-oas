@@ -517,8 +517,12 @@ func main() {
 		})
 	}
 
-	// ===== POST /api/v1/auth/dev-token — temporary token for development (ZIWAY_DEV_TOKEN_ENABLED=true only) =====
-	devTokenEnabled := os.Getenv("ZIWAY_DEV_TOKEN_ENABLED") == "true"
+	// ===== POST /api/v1/auth/dev-token — temporary token for development =====
+	// Environment-aware: PROD always disabled (security red line), non-PROD default enabled
+	isProd := os.Getenv("COZE_PROJECT_ENV") == "PROD"
+	devTokenEnv := os.Getenv("ZIWAY_DEV_TOKEN_ENABLED")
+	// PROD: always disabled; non-PROD: enabled unless explicitly set to "false"
+	devTokenEnabled := !isProd && devTokenEnv != "false"
 	if devTokenEnabled {
 		api.POST("/auth/dev-token", func(c *gin.Context) {
 			if jwtIssuer == nil {
@@ -620,7 +624,7 @@ func main() {
 				"user_code":  user.UserCode,
 			})
 		})
-		log.Info("DEV token endpoint enabled (ZIWAY_DEV_TOKEN_ENABLED=true)")
+		log.Info("DEV token endpoint enabled", zap.Bool("is_prod", isProd), zap.String("ZIWAY_DEV_TOKEN_ENABLED", devTokenEnv))
 	}
 
 	// ===== Owner Plane (/owner/*) — OU 权限 =====
