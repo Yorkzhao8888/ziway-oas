@@ -571,8 +571,13 @@ func main() {
 		})
 	}
 
-	// ===== Admin Plane (/admin/*) — AU 权限 =====
+	// ===== Admin Plane (/admin/*) — 白名单 A: OU/AU/OAM =====
+	if jwtVerifier == nil {
+		log.Fatal("admin routes require JWT verifier, but it is not initialized")
+	}
 	admin := api.Group("/admin")
+	admin.Use(middleware.JWTAuth(jwtVerifier, nil, log))
+	admin.Use(middleware.RequireUsers("oas-ou-admin", "oas-au-admin", "oas-oam-admin"))
 	{
 		// 系统配置
 		admin.GET("/configs", func(c *gin.Context) {
@@ -631,8 +636,13 @@ func main() {
 			response.Created(c, k)
 		})
 
-		// 审计日志
+		// 审计日志 — 白名单 B: 仅 OU/AU（OAM 不可读审计，已裁定）
 		admin.GET("/audit-logs", func(c *gin.Context) {
+			username, _ := c.Get("username")
+			if !isInAdminWhitelistB(username.(string)) {
+				response.Forbidden(c, "audit logs restricted to OU/AU admin")
+				return
+			}
 			var items []AuditLog
 			page, _ := parseInt(c.DefaultQuery("page", "1"))
 			size, _ := parseInt(c.DefaultQuery("size", "20"))
@@ -1186,6 +1196,11 @@ func isAdminAccount(username string) bool {
 // canOperateAdminAccount checks if the operator can manage admin accounts (Whitelist B).
 func canOperateAdminAccount(operatorUsername string) bool {
 	return operatorUsername == "oas-ou-admin" || operatorUsername == "oas-au-admin"
+}
+
+// isInAdminWhitelistB checks if the user is in Whitelist B (audit log access).
+func isInAdminWhitelistB(username string) bool {
+	return canOperateAdminAccount(username)
 }
 
 // seedTestUser creates a test user with bcrypt-hashed password if no users exist.
