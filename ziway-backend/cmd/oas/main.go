@@ -12,7 +12,8 @@ import (
 	"time"
 
 	"go.uber.org/zap"
-	"golang.org/x/crypto/bcrypt"
+	"ziway/backend/pkg/password"
+	"ziway/backend/pkg/ratelimit"
 
 	"ziway/backend/pkg/config"
 	"ziway/backend/pkg/db"
@@ -198,6 +199,9 @@ func main() {
 		&RBACPolicy{}, &OASUser{}, &OASRole{}, &OASUserRole{},
 	)
 
+	// Login rate limiter: 5 failures = 15 min lockout
+	loginLimiter := ratelimit.NewLoginLimiter(5, 15*time.Minute)
+
 	r := gin.New()
 	r.Use(middleware.CORS(), middleware.TraceID(), middleware.Recover(log))
 
@@ -309,13 +313,22 @@ func main() {
 			response.Unauthorized(c, "username and password required")
 			return
 		}
+		// Rate limit check
+		clientIP := c.ClientIP()
+		if !loginLimiter.Check(clientIP, req.Username) {
+			lockout := loginLimiter.LockoutRemaining(clientIP, req.Username)
+			response.TooManyRequests(c, "too many failed attempts, try again in "+lockout.Round(time.Second).String())
+			return
+		}
 		// Look up user from shared users table
 		var user OASUser
 		if err := database.Where("username = ?", req.Username).First(&user).Error; err != nil {
+			loginLimiter.RecordFailure(clientIP, req.Username)
 			response.Unauthorized(c, "invalid credentials")
 			return
 		}
-		if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(req.Password)); err != nil {
+		if err := password.Verify(req.Password, user.PasswordHash); err != nil {
+			loginLimiter.RecordFailure(clientIP, req.Username)
 			response.Unauthorized(c, "invalid credentials")
 			return
 		}
@@ -323,6 +336,7 @@ func main() {
 			response.Forbidden(c, "account disabled")
 			return
 		}
+		loginLimiter.RecordSuccess(clientIP, req.Username)
 		// Update last_login_at
 		now := time.Now()
 		database.Model(&user).Update("last_login_at", &now)
@@ -725,12 +739,21 @@ func main() {
 			response.BadRequest(c, "username and password required")
 			return
 		}
+		// Rate limit check
+		clientIP := c.ClientIP()
+		if !loginLimiter.Check(clientIP, req.Username) {
+			lockout := loginLimiter.LockoutRemaining(clientIP, req.Username)
+			response.TooManyRequests(c, "too many failed attempts, try again in "+lockout.Round(time.Second).String())
+			return
+		}
 		var user OASUser
 		if err := database.Where("username = ?", req.Username).First(&user).Error; err != nil {
+			loginLimiter.RecordFailure(clientIP, req.Username)
 			response.Unauthorized(c, "invalid credentials")
 			return
 		}
-		if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(req.Password)); err != nil {
+		if err := password.Verify(req.Password, user.PasswordHash); err != nil {
+			loginLimiter.RecordFailure(clientIP, req.Username)
 			response.Unauthorized(c, "invalid credentials")
 			return
 		}
@@ -738,6 +761,7 @@ func main() {
 			response.Forbidden(c, "account disabled")
 			return
 		}
+		loginLimiter.RecordSuccess(clientIP, req.Username)
 		now := time.Now()
 		database.Model(&user).Update("last_login_at", &now)
 		var roles []string
@@ -790,7 +814,8 @@ func main() {
 	adminUsers := api.Group("/admin")
 	if jwtVerifier != nil {
 		adminUsers.Use(middleware.JWTAuth(jwtVerifier, nil, log))
-		adminUsers.Use(middleware.RequireUsers("oas-ou-admin", "oas-au-admin"))
+		// 白名单 A：系统管理访问（/admin/*）= OU-admin + AU-admin + OAM
+		adminUsers.Use(middleware.RequireUsers("oas-ou-admin", "oas-au-admin", "oas-oam-admin"))
 	}
 	adminUsers.GET("/users", func(c *gin.Context) {
 		type UserVO struct {
@@ -843,12 +868,18 @@ func main() {
 			response.BadRequest(c, "username, password, role_code required")
 			return
 		}
+		// 白名单 B：创建 admin 账号仅 OU/AU admin 可操作
+		operatorUsername, _ := c.Get("username")
+		if isAdminAccount(req.Username) && !canOperateAdminAccount(fmt.Sprintf("%v", operatorUsername)) {
+			response.Forbidden(c, "only oas-ou-admin and oas-au-admin can create admin accounts")
+			return
+		}
 		var existing OASUser
 		if database.Where("username = ?", req.Username).First(&existing).Error == nil {
 			response.BadRequest(c, "username already exists")
 			return
 		}
-		hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
+		hash, err := password.Hash(req.Password)
 		if err != nil {
 			response.InternalError(c, "failed to hash password")
 			return
@@ -906,6 +937,14 @@ func main() {
 			return
 		}
 		id, _ := parseUint(c.Param("id"))
+		// 白名单 B：修改 admin 账号角色仅 OU/AU admin 可操作
+		var targetUser OASUser
+		database.First(&targetUser, id)
+		operatorUsername, _ := c.Get("username")
+		if isAdminAccount(targetUser.Username) && !canOperateAdminAccount(fmt.Sprintf("%v", operatorUsername)) {
+			response.Forbidden(c, "only oas-ou-admin and oas-au-admin can modify admin account roles")
+			return
+		}
 		database.Where("user_id = ?", id).Delete(&OASUserRole{})
 		for _, rc := range req.Roles {
 			var role OASRole
@@ -940,6 +979,14 @@ func main() {
 			return
 		}
 		id, _ := parseUint(c.Param("id"))
+		// 白名单 B：修改 admin 账号状态仅 OU/AU admin 可操作
+		var targetUser OASUser
+		database.First(&targetUser, id)
+		operatorUsername, _ := c.Get("username")
+		if isAdminAccount(targetUser.Username) && !canOperateAdminAccount(fmt.Sprintf("%v", operatorUsername)) {
+			response.Forbidden(c, "only oas-ou-admin and oas-au-admin can modify admin account status")
+			return
+		}
 		database.Model(&OASUser{}).Where("id = ?", id).Update("status", req.Status)
 		database.Create(&AuditLog{
 			Plane:    "admin",
@@ -986,7 +1033,8 @@ func main() {
 			c.Redirect(302, "/login?redirect=/admin/users")
 			return
 		}
-		if claims.Username != "oas-ou-admin" && claims.Username != "oas-au-admin" {
+		// 白名单 A：系统管理访问 = OU-admin + AU-admin + OAM
+		if claims.Username != "oas-ou-admin" && claims.Username != "oas-au-admin" && claims.Username != "oas-oam-admin" {
 			response.Forbidden(c, "access denied")
 			return
 		}
@@ -1123,13 +1171,30 @@ func seedRBACPolicies(database *gorm.DB, log *zap.Logger) {
 	regeneratePolicyCSV(database, log)
 }
 
+// adminUsernames are the highest-privilege accounts.
+// Whitelist B: only oas-ou-admin and oas-au-admin can operate on these accounts.
+var adminUsernames = map[string]bool{
+	"oas-ou-admin":  true,
+	"oas-au-admin":  true,
+	"oas-oam-admin": true,
+}
+
+func isAdminAccount(username string) bool {
+	return adminUsernames[username]
+}
+
+// canOperateAdminAccount checks if the operator can manage admin accounts (Whitelist B).
+func canOperateAdminAccount(operatorUsername string) bool {
+	return operatorUsername == "oas-ou-admin" || operatorUsername == "oas-au-admin"
+}
+
 // seedTestUser creates a test user with bcrypt-hashed password if no users exist.
 // seedTestUsers creates test accounts based on product edition.
 // Beta edition: multiple test accounts with different roles (SU/AU/CU/GU)
 // Production edition: only admin account
 // Admin accounts (oas-ou-admin, oas-au-admin) are always created.
 func seedTestUsers(database *gorm.DB, log *zap.Logger, edition string) {
-	hash, err := bcrypt.GenerateFromPassword([]byte("test123"), bcrypt.DefaultCost)
+	hash, err := password.Hash("test123")
 	if err != nil {
 		log.Error("failed to hash test password", zap.Error(err))
 		return
@@ -1147,6 +1212,7 @@ func seedTestUsers(database *gorm.DB, log *zap.Logger, edition string) {
 	}{
 		{UserCode: "XHPZ#OU-ADMIN", Username: "oas-ou-admin", DisplayName: "OAS 组织管理员", IdentityType: "OU", RoleCode: "SU", RoleName: "System User"},
 		{UserCode: "XHPZ#AU-ADMIN", Username: "oas-au-admin", DisplayName: "OAS 运营管理员", IdentityType: "AU", RoleCode: "SU", RoleName: "System User"},
+		{UserCode: "XHPZ#OAM-ADMIN", Username: "oas-oam-admin", DisplayName: "OAS 权限执行管理员", IdentityType: "OAM", RoleCode: "SU", RoleName: "System User"},
 	}
 
 	// 确保 SU 角色存在
@@ -1260,7 +1326,7 @@ func seedTestUsers(database *gorm.DB, log *zap.Logger, edition string) {
 	}
 
 	// Create disabled user for testing 403 response
-	hash2, _ := bcrypt.GenerateFromPassword([]byte("disabled123"), bcrypt.DefaultCost)
+	hash2, _ := password.Hash("disabled123")
 	database.Create(&OASUser{
 		UserCode:     "XHPZ#DU-DISABLED",
 		Username:     "disabled_user",

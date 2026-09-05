@@ -60,6 +60,11 @@ func Conflict(c *gin.Context, msg string) {
 	json(c, http.StatusConflict, msg, nil)
 }
 
+// TooManyRequests 429
+func TooManyRequests(c *gin.Context, msg string) {
+	json(c, http.StatusTooManyRequests, msg, nil)
+}
+
 // InternalError 500
 func InternalError(c *gin.Context, msg string) {
 	json(c, http.StatusInternalServerError, msg, nil)
