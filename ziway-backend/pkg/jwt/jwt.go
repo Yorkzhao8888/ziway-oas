@@ -63,6 +63,21 @@ func (i *Issuer) IssueAccessToken(c *Claims) (string, int64, error) {
 	return signed, int64(i.accessTokenTTL.Seconds()), err
 }
 
+func (i *Issuer) IssueAccessTokenWithTTL(c *Claims, ttl time.Duration) (string, int64, error) {
+	now := time.Now()
+	c.RegisteredClaims = jwt.RegisteredClaims{
+		Issuer:    i.issuer,
+		IssuedAt:  jwt.NewNumericDate(now),
+		ExpiresAt: jwt.NewNumericDate(now.Add(ttl)),
+		NotBefore: jwt.NewNumericDate(now),
+		Subject:   c.UserID,
+		ID:        c.TokenID,
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodRS256, c)
+	signed, err := token.SignedString(i.privateKey)
+	return signed, int64(ttl.Seconds()), err
+}
+
 func (i *Issuer) IssueRefreshToken(userID, identityType, tokenID string) (string, error) {
 	now := time.Now()
 	claims := jwt.RegisteredClaims{

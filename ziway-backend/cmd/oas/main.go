@@ -517,6 +517,112 @@ func main() {
 		})
 	}
 
+	// ===== POST /api/v1/auth/dev-token — temporary token for development (ZIWAY_DEV_TOKEN_ENABLED=true only) =====
+	devTokenEnabled := os.Getenv("ZIWAY_DEV_TOKEN_ENABLED") == "true"
+	if devTokenEnabled {
+		api.POST("/auth/dev-token", func(c *gin.Context) {
+			if jwtIssuer == nil {
+				response.InternalError(c, "jwt issuer not configured")
+				return
+			}
+			var req struct {
+				Username       string `json:"username"`
+				Role           string `json:"role"`
+				ExpiresMinutes int    `json:"expires_minutes"`
+			}
+			if err := c.ShouldBindJSON(&req); err != nil || (req.Role == "" && req.Username == "") {
+				response.BadRequest(c, "role or username required")
+				return
+			}
+
+			// Default 30 minutes, max 60 minutes
+			if req.ExpiresMinutes <= 0 {
+				req.ExpiresMinutes = 30
+			}
+			if req.ExpiresMinutes > 60 {
+				req.ExpiresMinutes = 60
+			}
+
+			// Find user by role or username
+			var user OASUser
+			if req.Username != "" {
+				if err := database.Where("username = ?", req.Username).First(&user).Error; err != nil {
+					response.NotFound(c, "user not found")
+					return
+				}
+			} else {
+				// Find a user with the specified role
+				var userID uint64
+				if err := database.Table("user_roles").
+					Select("user_roles.user_id").
+					Joins("JOIN roles r ON r.id = user_roles.role_id").
+					Where("r.role_code = ?", req.Role).
+					Pluck("user_roles.user_id", &userID).Error; err != nil || userID == 0 {
+					response.NotFound(c, "no user found for role: "+req.Role)
+					return
+				}
+				if err := database.First(&user, userID).Error; err != nil {
+					response.NotFound(c, "user not found")
+					return
+				}
+			}
+
+			// Get user roles
+			var roles []string
+			database.Table("user_roles").
+				Select("r.role_code").
+				Joins("JOIN roles r ON r.id = user_roles.role_id").
+				Where("user_roles.user_id = ?", user.ID).
+				Pluck("r.role_code", &roles)
+			activeRole := ""
+			if len(roles) > 0 {
+				activeRole = roles[0]
+			}
+
+			now := time.Now()
+			ttl := time.Duration(req.ExpiresMinutes) * time.Minute
+			claims := &jwt.Claims{
+				UserID:       user.UserCode,
+				IdentityID:   user.UserCode,
+				IdentityType: map[string]string{"H": "human", "N": "nhi"}[user.EntityType],
+				Username:     user.Username,
+				Role:         activeRole,
+				SubRole:      "",
+				NHIFlag:      user.EntityType == "N",
+				MSAccess:     []string{"ams", "cms", "dms", "hms", "fms", "tms", "ems", "gms", "oms", "vms", "ims", "sms"},
+				Roles:        roles,
+				ActiveRole:   activeRole,
+				TokenID:      fmt.Sprintf("dev-%d-%d", user.ID, now.Unix()),
+			}
+			token, _, err := jwtIssuer.IssueAccessTokenWithTTL(claims, ttl)
+			if err != nil {
+				response.InternalError(c, "failed to issue token")
+				return
+			}
+
+			expiresAt := now.Add(ttl)
+
+			// Audit log
+			database.Create(&AuditLog{
+				UserID:   user.UserCode,
+				UserName: user.DisplayName,
+				Plane:    "admin",
+				Action:   "auth.dev-token",
+				Resource: "jwt",
+				Detail:   fmt.Sprintf("mode=dev-token, role=%s, expires=%dm, ip=%s, token_id=%s", activeRole, req.ExpiresMinutes, c.ClientIP(), claims.TokenID),
+			})
+
+			response.OK(c, gin.H{
+				"token":      token,
+				"expires_at": expiresAt.Format(time.RFC3339),
+				"username":   user.Username,
+				"role":       activeRole,
+				"user_code":  user.UserCode,
+			})
+		})
+		log.Info("DEV token endpoint enabled (ZIWAY_DEV_TOKEN_ENABLED=true)")
+	}
+
 	// ===== Owner Plane (/owner/*) — OU 权限 =====
 	owner := api.Group("/owner")
 	{
@@ -732,7 +838,7 @@ func main() {
 	r.GET("/login", func(c *gin.Context) {
 		redirect := c.Query("redirect")
 		c.Header("Content-Type", "text/html; charset=utf-8")
-		c.String(200, loginPageHTML(redirect, edition))
+		c.String(200, loginPageHTML(redirect, edition, devTokenEnabled))
 	})
 
 	// ===== POST /api/v1/auth/login — username+password login =====
@@ -1356,7 +1462,7 @@ func seedTestUsers(database *gorm.DB, log *zap.Logger, edition string) {
 }
 
 // loginPageHTML returns the login page HTML.
-func loginPageHTML(redirect, edition string) string {
+func loginPageHTML(redirect, edition string, devTokenEnabled bool) string {
 	quickLoginSection := ""
 	if edition == "beta" {
 		quickLoginSection = `
@@ -1368,6 +1474,36 @@ func loginPageHTML(redirect, edition string) string {
 				<button onclick="quickLogin('CU')" style="padding:6px 14px;border:1px solid #d1d5db;border-radius:6px;background:#f9fafb;cursor:pointer;font-size:13px">CU 客户</button>
 				<button onclick="quickLogin('GU')" style="padding:6px 14px;border:1px solid #d1d5db;border-radius:6px;background:#f9fafb;cursor:pointer;font-size:13px">GU 访客</button>
 				<button onclick="quickLogin('EM')" style="padding:6px 14px;border:1px solid #d1d5db;border-radius:6px;background:#f9fafb;cursor:pointer;font-size:13px">EM 供给</button>
+			</div>
+		</div>`
+	}
+	devTokenSection := ""
+	if devTokenEnabled {
+		devTokenSection = `
+		<div style="margin-top:24px;padding-top:20px;border-top:1px solid #e5e7eb">
+			<p style="font-size:13px;color:#6b7280;margin-bottom:12px">🔧 开发临时令牌</p>
+			<div style="display:flex;gap:8px;align-items:center;margin-bottom:12px">
+				<select id="devTokenRole" style="flex:1;padding:8px 12px;border:1px solid #d1d5db;border-radius:6px;font-size:13px">
+					<option value="">按角色生成...</option>
+					<option value="SU">SU 管理员</option>
+					<option value="AU">AU 运营</option>
+					<option value="CU">CU 客户</option>
+					<option value="GU">GU 访客</option>
+					<option value="EM">EM 供给</option>
+					<option value="OFM">OFM 域主</option>
+					<option value="OVM">OVM 域运营</option>
+					<option value="OGM">OGM 域治理</option>
+					<option value="OAM">OAM 权限</option>
+				</select>
+				<button onclick="genDevToken()" style="padding:8px 16px;border:none;border-radius:6px;background:#059669;color:#fff;cursor:pointer;font-size:13px">生成</button>
+			</div>
+			<div id="devTokenResult" style="display:none">
+				<textarea id="devTokenText" readonly style="width:100%;height:80px;padding:8px;border:1px solid #d1d5db;border-radius:6px;font-size:11px;font-family:monospace;resize:none"></textarea>
+				<div style="display:flex;gap:8px;margin-top:8px">
+					<button onclick="copyDevToken()" style="flex:1;padding:6px;border:1px solid #d1d5db;border-radius:6px;background:#f9fafb;cursor:pointer;font-size:12px">📋 复制</button>
+					<button onclick="redirectWithDevToken()" id="devTokenRedirectBtn" style="flex:1;padding:6px;border:1px solid #d1d5db;border-radius:6px;background:#f9fafb;cursor:pointer;font-size:12px;display:none">🔗 携带令牌跳转</button>
+				</div>
+				<p id="devTokenInfo" style="font-size:11px;color:#6b7280;margin-top:8px"></p>
 			</div>
 		</div>`
 	}
@@ -1407,7 +1543,7 @@ input:focus{border-color:#2563eb;box-shadow:0 0 0 3px rgba(37,99,235,.1)}
 		<input id="password" name="password" type="password" autocomplete="current-password" required>
 		<button class="btn" type="submit" id="submitBtn">登录</button>
 		<p class="err" id="errMsg"></p>
-	</form>` + quickLoginSection + `
+	</form>` + quickLoginSection + devTokenSection + `
 </div>
 <script>
 async function doLogin(e){
@@ -1440,6 +1576,37 @@ function handleToken(data){
 		window.location.href=redirect+sep+'token='+data.access_token;
 	}else{
 		document.getElementById('form').innerHTML='<h1>登录成功</h1><p class="sub">角色: '+data.role+'</p><pre style="font-size:11px;word-break:break-all;background:#f9fafb;padding:12px;border-radius:8px;margin-top:12px;max-height:200px;overflow:auto">'+data.access_token+'</pre><p style="margin-top:12px;font-size:13px;color:#6b7280">Token 有效期: '+data.expires_in+'s</p>';
+	}
+}
+let devTokenValue='';
+async function genDevToken(){
+	const role=document.getElementById('devTokenRole').value;
+	if(!role){alert('请选择角色');return}
+	try{
+		const r=await fetch('/api/v1/auth/dev-token',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({role,expires_minutes:30})});
+		const d=await r.json();
+		if(d.code!==200)throw new Error(d.message||'dev-token failed');
+		devTokenValue=d.data.token;
+		document.getElementById('devTokenText').value=devTokenValue;
+		document.getElementById('devTokenResult').style.display='block';
+		document.getElementById('devTokenInfo').textContent='角色: '+d.data.role+' | 用户: '+d.data.username+' | 过期: '+new Date(d.data.expires_at).toLocaleString();
+		const redirect=document.getElementById('form').dataset.redirect;
+		if(redirect){
+			document.getElementById('devTokenRedirectBtn').style.display='block';
+		}
+	}catch(ex){alert(ex.message)}
+}
+function copyDevToken(){
+	navigator.clipboard.writeText(devTokenValue).then(()=>alert('已复制')).catch(()=>{
+		const ta=document.getElementById('devTokenText');
+		ta.select();document.execCommand('copy');alert('已复制');
+	});
+}
+function redirectWithDevToken(){
+	const redirect=document.getElementById('form').dataset.redirect;
+	if(redirect){
+		const sep=redirect.includes('?')?'&':'?';
+		window.location.href=redirect+sep+'token='+devTokenValue;
 	}
 }
 </script>
