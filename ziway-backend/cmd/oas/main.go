@@ -56,6 +56,7 @@ type AuditLog struct {
 	IP          string    `gorm:"size:64" json:"ip"`
 	UserAgent   string    `gorm:"size:256" json:"user_agent"`
 	Environment string    `gorm:"size:16;index" json:"environment"` // DEV/BETA/RC/PROD
+	Domain      string    `gorm:"size:8;index" json:"domain"`       // T/H/Y/V/O/A/F/G for XAM filtering
 	CreatedAt   time.Time `json:"created_at" json:"created_at"`
 }
 
@@ -392,6 +393,7 @@ func main() {
 			IP:          c.ClientIP(),
 			UserAgent:   c.Request.UserAgent(),
 			Environment: oasEnv.String(),
+			Domain:      user.Domain,
 		})
 		response.OK(c, gin.H{
 			"access_token": token,
@@ -499,6 +501,7 @@ func main() {
 				IP:          c.ClientIP(),
 				UserAgent:   c.Request.UserAgent(),
 				Environment: oasEnv.String(),
+				Domain:      user.Domain,
 			})
 
 			response.OK(c, gin.H{
@@ -768,17 +771,51 @@ func main() {
 			response.Created(c, k)
 		})
 
-		// 审计日志 — 白名单 B: 仅 OU/AU（OAM 不可读审计，已裁定）
+		// 审计日志 — 白名单 B (OU/AU) 全量 + XAM (T/H/Y/V) 本域 + OAM 不可读
 		admin.GET("/audit-logs", func(c *gin.Context) {
 			username, _ := c.Get("username")
-			if !isInAdminWhitelistB(username.(string)) {
-				response.Forbidden(c, "audit logs restricted to OU/AU admin")
+			rolesRaw, _ := c.Get("roles")
+			var roles []string
+			if rolesRaw != nil {
+				if rolesSlice, ok := rolesRaw.([]string); ok {
+					roles = rolesSlice
+				} else if rolesStr, ok := rolesRaw.(string); ok && rolesStr != "" {
+					roles = strings.Split(rolesStr, ",")
+				}
+			}
+			
+			// Check access: whitelist B (OU/AU) or XAM roles
+			isWhitelistB := isInAdminWhitelistB(username.(string))
+			isXAM := false
+			for _, role := range roles {
+				if role == "TAM" || role == "HAM" || role == "YAM" || role == "VAM" {
+					isXAM = true
+					break
+				}
+			}
+			
+			if !isWhitelistB && !isXAM {
+				response.Forbidden(c, "audit logs restricted to OU/AU admin or XAM roles")
 				return
 			}
+			
 			var items []AuditLog
 			page, _ := parseInt(c.DefaultQuery("page", "1"))
 			size, _ := parseInt(c.DefaultQuery("size", "20"))
 			q := database.Model(&AuditLog{})
+			
+			// XAM users can only see their own domain's audit logs
+			if isXAM && !isWhitelistB {
+				domain, _ := c.Get("domain")
+				if domainStr, ok := domain.(string); ok && domainStr != "" {
+					q = q.Where("domain = ?", domainStr)
+				} else {
+					// XAM user without domain should see nothing
+					response.OK(c, gin.H{"items": []AuditLog{}, "total": 0, "page": page, "size": size})
+					return
+				}
+			}
+			
 			if uid := c.Query("user_id"); uid != "" {
 				q = q.Where("user_id = ?", uid)
 			}
@@ -1145,6 +1182,7 @@ func main() {
 			IP:          c.ClientIP(),
 			UserAgent:   c.Request.UserAgent(),
 			Environment: oasEnv.String(),
+			Domain:      user.Domain,
 		})
 		response.Created(c, gin.H{"id": user.ID, "username": user.Username, "user_code": user.UserCode})
 	})
