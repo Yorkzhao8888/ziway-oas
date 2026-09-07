@@ -4,6 +4,7 @@ import (
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/base64"
+	"encoding/json"
 	"encoding/pem"
 	"fmt"
 	"math/big"
@@ -1047,6 +1048,76 @@ func main() {
 			response.OK(c, approval)
 		})
 
+		// ===== 所有权视图 (/admin/ownership) =====
+		admin.GET("/ownership/matrix", func(c *gin.Context) {
+			// 获取域注册信息
+			var domains []DomainRegistry
+			database.Order("domain_code").Find(&domains)
+			
+			// 获取服务注册信息
+			var services []ServiceRegistry
+			database.Order("service_name").Find(&services)
+			
+			// 构建所有权矩阵
+			matrix := make(map[string]interface{})
+			
+			// 域所有权
+			domainOwnership := make([]map[string]interface{}, 0)
+			for _, d := range domains {
+				domainOwnership = append(domainOwnership, map[string]interface{}{
+					"domain_code":   d.DomainCode,
+					"domain_name":   d.DomainName,
+					"bos_name":      d.BOSName,
+					"owner_user_id": d.OwnerUserID,
+					"status":        d.Status,
+				})
+			}
+			matrix["domains"] = domainOwnership
+			
+			// 服务归属
+			serviceOwnership := make([]map[string]interface{}, 0)
+			for _, s := range services {
+				// 尝试从 metadata 中提取域信息
+				domain := ""
+				if s.Metadata != "" {
+					// 简单解析 metadata JSON（如果存在）
+					var meta map[string]interface{}
+					if err := json.Unmarshal([]byte(s.Metadata), &meta); err == nil {
+						if d, ok := meta["domain"].(string); ok {
+							domain = d
+						}
+					}
+				}
+				
+				serviceOwnership = append(serviceOwnership, map[string]interface{}{
+					"service_name": s.ServiceName,
+					"service_type": s.ServiceType,
+					"version":      s.Version,
+					"endpoint":     s.Endpoint,
+					"status":       s.Status,
+					"domain":       domain,
+				})
+			}
+			matrix["services"] = serviceOwnership
+			
+			// 如果无数据，返回默认框架
+			if len(domains) == 0 && len(services) == 0 {
+				matrix["note"] = "暂无注册数据，以下为默认映射框架"
+				matrix["default_mapping"] = []map[string]interface{}{
+					{"domain": "T", "name": "技术域", "owner": "TAM", "description": "技术研发支撑"},
+					{"domain": "H", "name": "人资云", "owner": "HAM", "description": "人事管理"},
+					{"domain": "Y", "name": "智场域", "owner": "YAM", "description": "智场运营"},
+					{"domain": "V", "name": "经营域", "owner": "VAM", "description": "经营分析"},
+					{"domain": "O", "name": "组织域", "owner": "OAM", "description": "组织管理"},
+					{"domain": "A", "name": "行政域", "owner": "AAM", "description": "行政管理"},
+					{"domain": "F", "name": "财务域", "owner": "FAM", "description": "财务管理"},
+					{"domain": "G", "name": "商务域", "owner": "GAM", "description": "商务管理"},
+				}
+			}
+			
+			response.OK(c, matrix)
+		})
+
 		// 系统配置
 		admin.GET("/configs", func(c *gin.Context) {
 			var items []SystemConfig
@@ -1367,6 +1438,37 @@ func main() {
 		}
 		c.Header("Content-Type", "text/html; charset=utf-8")
 		c.String(200, approvalsPageHTML(username, oasEnv.String(), tokenStr))
+	})
+
+	// ===== GET /admin/ownership — 所有权视图（白名单 A）=====
+	r.GET("/admin/ownership", func(c *gin.Context) {
+		if jwtVerifier == nil {
+			response.InternalError(c, "JWT verifier not configured")
+			return
+		}
+		tokenStr := c.Query("token")
+		if tokenStr == "" {
+			auth := c.GetHeader("Authorization")
+			if len(auth) > 7 && auth[:7] == "Bearer " {
+				tokenStr = auth[7:]
+			}
+		}
+		if tokenStr == "" {
+			c.Redirect(302, "/login?redirect=/admin/ownership")
+			return
+		}
+		claims, err := jwtVerifier.Verify(tokenStr)
+		if err != nil {
+			c.Redirect(302, "/login?redirect=/admin/ownership")
+			return
+		}
+		if !isInAdminWhitelistA(claims.Username) {
+			c.Header("Content-Type", "text/html; charset=utf-8")
+			c.String(403, "<h1>403 Forbidden</h1><p>Access restricted to whitelist A (OU/AU/OAM).</p>")
+			return
+		}
+		c.Header("Content-Type", "text/html; charset=utf-8")
+		c.String(200, ownershipPageHTML(claims.Username))
 	})
 
 	// ===== GET /admin/audit-logs — 审计日志页面（白名单 B：仅 2 admin）=====
@@ -3414,6 +3516,164 @@ function execute(id) {
 }
 
 loadApprovals();
+</script>
+</body>
+</html>`
+}
+
+// ownershipPageHTML returns the ownership view page HTML (whitelist A).
+func ownershipPageHTML(username string) string {
+	return `<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>所有权视图 - OAS Console</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif; background: #f5f5f5; color: #333; }
+.header { background: #1a73e8; color: white; padding: 16px 24px; display: flex; justify-content: space-between; align-items: center; }
+.header h1 { font-size: 20px; font-weight: 500; }
+.header .user { font-size: 14px; opacity: 0.9; }
+.container { max-width: 1200px; margin: 24px auto; padding: 0 24px; }
+.card { background: white; border-radius: 8px; padding: 24px; margin-bottom: 24px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+.card h2 { font-size: 18px; margin-bottom: 16px; color: #1a73e8; }
+.matrix-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px; }
+.domain-card { background: #f8f9fa; border: 1px solid #e0e0e0; border-radius: 6px; padding: 16px; }
+.domain-card h3 { font-size: 16px; margin-bottom: 8px; color: #333; }
+.domain-card .code { font-size: 12px; color: #666; margin-bottom: 8px; }
+.domain-card .info { font-size: 14px; color: #555; margin-bottom: 4px; }
+.service-table { width: 100%; border-collapse: collapse; }
+.service-table th, .service-table td { padding: 12px; text-align: left; border-bottom: 1px solid #e0e0e0; }
+.service-table th { background: #f8f9fa; font-weight: 500; color: #333; }
+.service-table td { font-size: 14px; }
+.status-badge { display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: 12px; }
+.status-active { background: #e6f4ea; color: #1e8e3e; }
+.status-healthy { background: #e6f4ea; color: #1e8e3e; }
+.status-inactive { background: #fce8e6; color: #d93025; }
+.note { background: #fff3cd; border: 1px solid #ffc107; border-radius: 6px; padding: 16px; margin-bottom: 24px; font-size: 14px; color: #856404; }
+.default-mapping { margin-top: 16px; }
+.default-mapping table { width: 100%; border-collapse: collapse; }
+.default-mapping th, .default-mapping td { padding: 10px; text-align: left; border-bottom: 1px solid #e0e0e0; }
+.default-mapping th { background: #f8f9fa; font-weight: 500; }
+</style>
+</head>
+<body>
+<div class="header">
+  <h1>🏛️ 所有权视图</h1>
+  <div class="user">` + username + `</div>
+</div>
+<div class="container">
+  <div id="note" class="note" style="display:none;"></div>
+  
+  <div class="card">
+    <h2>📊 域所有权</h2>
+    <div id="domains" class="matrix-grid"></div>
+  </div>
+  
+  <div class="card">
+    <h2>🔧 服务归属</h2>
+    <table class="service-table">
+      <thead>
+        <tr><th>服务名</th><th>类型</th><th>版本</th><th>端点</th><th>域</th><th>状态</th></tr>
+      </thead>
+      <tbody id="services"></tbody>
+    </table>
+  </div>
+  
+  <div id="default-mapping" class="card" style="display:none;">
+    <h2>📋 默认映射框架</h2>
+    <div class="default-mapping">
+      <table>
+        <thead>
+          <tr><th>域代码</th><th>域名</th><th>管理者</th><th>描述</th></tr>
+        </thead>
+        <tbody id="default-table"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+<script>
+const token = new URLSearchParams(location.search).get('token') || '';
+const headers = token ? {'Authorization':'Bearer '+token} : {};
+
+async function loadOwnership() {
+  try {
+    const res = await fetch('/api/v1/admin/ownership/matrix', {headers});
+    const data = await res.json();
+    
+    if (data.code !== 200) {
+      alert('加载失败: ' + data.message);
+      return;
+    }
+    
+    const matrix = data.data;
+    
+    // 显示备注
+    if (matrix.note) {
+      document.getElementById('note').textContent = matrix.note;
+      document.getElementById('note').style.display = 'block';
+    }
+    
+    // 渲染域所有权
+    const domainsDiv = document.getElementById('domains');
+    if (matrix.domains && matrix.domains.length > 0) {
+      matrix.domains.forEach(d => {
+        const card = document.createElement('div');
+        card.className = 'domain-card';
+        card.innerHTML = "
+          <h3>" + (d.domain_name || d.domain_code) + "</h3>
+          <div class="code">代码: " + d.domain_code + "</div>
+          <div class="info">BOS: " + (d.bos_name || "-") + "</div>
+          <div class="info">负责人: " + (d.owner_user_id || "-") + "</div>
+          <div class="info">状态: <span class="status-badge status-" + d.status + "">" + d.status + "</span></div>
+        ";
+        domainsDiv.appendChild(card);
+      });
+    } else {
+      domainsDiv.innerHTML = '<p style="color:#666;">暂无域注册数据</p>';
+    }
+    
+    // 渲染服务归属
+    const servicesTbody = document.getElementById('services');
+    if (matrix.services && matrix.services.length > 0) {
+      matrix.services.forEach(s => {
+        const row = document.createElement('tr');
+        row.innerHTML = "
+          <td>" + s.service_name + "</td>
+          <td>" + s.service_type + "</td>
+          <td>" + (s.version || "-") + "</td>
+          <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;">" + (s.endpoint || "-") + "</td>
+          <td>" + (s.domain || "-") + "</td>
+          <td><span class="status-badge status-" + s.status + "">" + s.status + "</span></td>
+        ";
+        servicesTbody.appendChild(row);
+      });
+    } else {
+      servicesTbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:#666;">暂无服务注册数据</td></tr>';
+    }
+    
+    // 渲染默认映射
+    if (matrix.default_mapping) {
+      document.getElementById('default-mapping').style.display = 'block';
+      const defaultTable = document.getElementById('default-table');
+      matrix.default_mapping.forEach(m => {
+        const row = document.createElement('tr');
+        row.innerHTML = "
+          <td>" + m.domain + "</td>
+          <td>" + m.name + "</td>
+          <td>" + m.owner + "</td>
+          <td>" + m.description + "</td>
+        ";
+        defaultTable.appendChild(row);
+      });
+    }
+  } catch (err) {
+    alert('加载失败: ' + err.message);
+  }
+}
+
+loadOwnership();
 </script>
 </body>
 </html>`
