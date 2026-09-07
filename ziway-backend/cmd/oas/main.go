@@ -13,6 +13,7 @@ import (
 
 	"go.uber.org/zap"
 	"ziway/backend/pkg/envpolicy"
+	"ziway/backend/pkg/model"
 	"ziway/backend/pkg/password"
 	"ziway/backend/pkg/ratelimit"
 
@@ -204,6 +205,7 @@ func main() {
 		&SystemConfig{}, &AuditLog{}, &DomainRegistry{},
 		&GovernancePolicy{}, &ServiceRegistry{}, &APIKey{},
 		&RBACPolicy{}, &OASUser{}, &OASRole{}, &OASUserRole{},
+		&model.Organization{}, &model.UserOrganization{},
 	)
 
 	// Login rate limiter: 5 failures = 15 min lockout
@@ -1373,6 +1375,258 @@ func main() {
 		response.OK(c, gin.H{"message": "role deleted"})
 	})
 
+	// ===== Organization Management (GET/POST/PUT/DELETE /admin/orgs) — JWT + whitelist A =====
+	adminOrgs := api.Group("/admin/orgs", middleware.JWTAuth(jwtVerifier, nil, log), middleware.RequireUsers("oas-ou-admin", "oas-au-admin", "oas-oam-admin"))
+	{
+		// List organizations (with tree structure)
+		adminOrgs.GET("", func(c *gin.Context) {
+			var orgs []model.Organization
+			if err := database.Preload("Parent").Preload("Children").Find(&orgs).Error; err != nil {
+				response.InternalError(c, "load orgs failed: "+err.Error())
+				return
+			}
+			// Build tree structure (only top-level orgs with children)
+			orgMap := make(map[uint]*model.Organization)
+			var topOrgs []model.Organization
+			for i := range orgs {
+				orgMap[orgs[i].ID] = &orgs[i]
+			}
+			for i := range orgs {
+				if orgs[i].ParentID == nil {
+					topOrgs = append(topOrgs, orgs[i])
+				}
+			}
+			response.OK(c, gin.H{"items": topOrgs, "total": len(topOrgs)})
+		})
+
+		// Get organization detail
+		adminOrgs.GET("/:id", func(c *gin.Context) {
+			idStr := c.Param("id")
+			var org model.Organization
+			if err := database.Preload("Parent").Preload("Children").Preload("Members").First(&org, idStr).Error; err != nil {
+				response.NotFound(c, "org not found")
+				return
+			}
+			response.OK(c, org)
+		})
+
+		// Create organization
+		adminOrgs.POST("", func(c *gin.Context) {
+			var req struct {
+				Code        string `json:"code" binding:"required"`
+				Name        string `json:"name" binding:"required"`
+				Description string `json:"description"`
+				ParentID    *uint  `json:"parent_id"`
+				Domain      string `json:"domain"`
+			}
+			if err := c.ShouldBindJSON(&req); err != nil {
+				response.BadRequest(c, "invalid request: "+err.Error())
+				return
+			}
+			org := model.Organization{
+				Code:        req.Code,
+				Name:        req.Name,
+				Description: req.Description,
+				ParentID:    req.ParentID,
+				Domain:      req.Domain,
+				Status:      "active",
+			}
+			if err := database.Create(&org).Error; err != nil {
+				response.InternalError(c, "create org failed: "+err.Error())
+				return
+			}
+			operator, _ := c.Get("user_id")
+			database.Create(&AuditLog{
+				Plane:      "admin",
+				Action:     "org.create",
+				UserID:     fmt.Sprintf("%v", operator),
+				ResourceID: fmt.Sprintf("org-%d", org.ID),
+				Detail:     fmt.Sprintf("code=%s, name=%s, domain=%s", org.Code, org.Name, org.Domain),
+				IP:         c.ClientIP(),
+			})
+			response.Created(c, org)
+		})
+
+		// Update organization
+		adminOrgs.PUT("/:id", func(c *gin.Context) {
+			idStr := c.Param("id")
+			var org model.Organization
+			if err := database.First(&org, idStr).Error; err != nil {
+				response.NotFound(c, "org not found")
+				return
+			}
+			var req struct {
+				Name        string `json:"name"`
+				Description string `json:"description"`
+				ParentID    *uint  `json:"parent_id"`
+				Domain      string `json:"domain"`
+				Status      string `json:"status"`
+			}
+			if err := c.ShouldBindJSON(&req); err != nil {
+				response.BadRequest(c, "invalid request: "+err.Error())
+				return
+			}
+			updates := map[string]interface{}{}
+			if req.Name != "" {
+				updates["name"] = req.Name
+			}
+			if req.Description != "" {
+				updates["description"] = req.Description
+			}
+			if req.ParentID != nil {
+				updates["parent_id"] = *req.ParentID
+			}
+			if req.Domain != "" {
+				updates["domain"] = req.Domain
+			}
+			if req.Status != "" {
+				updates["status"] = req.Status
+			}
+			if err := database.Model(&org).Updates(updates).Error; err != nil {
+				response.InternalError(c, "update org failed: "+err.Error())
+				return
+			}
+			operator, _ := c.Get("user_id")
+			database.Create(&AuditLog{
+				Plane:      "admin",
+				Action:     "org.update",
+				UserID:     fmt.Sprintf("%v", operator),
+				ResourceID: fmt.Sprintf("org-%d", org.ID),
+				Detail:     fmt.Sprintf("updates=%v", updates),
+				IP:         c.ClientIP(),
+			})
+			response.OK(c, org)
+		})
+
+		// Delete organization
+		adminOrgs.DELETE("/:id", func(c *gin.Context) {
+			idStr := c.Param("id")
+			var org model.Organization
+			if err := database.First(&org, idStr).Error; err != nil {
+				response.NotFound(c, "org not found")
+				return
+			}
+			// Check if has children
+			var childCount int64
+			database.Model(&model.Organization{}).Where("parent_id = ?", org.ID).Count(&childCount)
+			if childCount > 0 {
+				response.BadRequest(c, "cannot delete org with children")
+				return
+			}
+			// Check if has members
+			var memberCount int64
+			database.Model(&model.UserOrganization{}).Where("organization_id = ?", org.ID).Count(&memberCount)
+			if memberCount > 0 {
+				response.BadRequest(c, "cannot delete org with members")
+				return
+			}
+			if err := database.Delete(&org).Error; err != nil {
+				response.InternalError(c, "delete org failed: "+err.Error())
+				return
+			}
+			operator, _ := c.Get("user_id")
+			database.Create(&AuditLog{
+				Plane:      "admin",
+				Action:     "org.delete",
+				UserID:     fmt.Sprintf("%v", operator),
+				ResourceID: fmt.Sprintf("org-%d", org.ID),
+				Detail:     fmt.Sprintf("code=%s", org.Code),
+				IP:         c.ClientIP(),
+			})
+			response.OK(c, gin.H{"message": "org deleted"})
+		})
+
+		// Get organization members
+		adminOrgs.GET("/:id/members", func(c *gin.Context) {
+			idStr := c.Param("id")
+			var members []model.UserOrganization
+			if err := database.Where("organization_id = ?", idStr).Find(&members).Error; err != nil {
+				response.InternalError(c, "load members failed: "+err.Error())
+				return
+			}
+			response.OK(c, gin.H{"items": members, "total": len(members)})
+		})
+
+		// Add member to organization
+		adminOrgs.POST("/:id/members", func(c *gin.Context) {
+			idStr := c.Param("id")
+			var org model.Organization
+			if err := database.First(&org, idStr).Error; err != nil {
+				response.NotFound(c, "org not found")
+				return
+			}
+			var req struct {
+				UserID uint   `json:"user_id" binding:"required"`
+				Role   string `json:"role"`
+			}
+			if err := c.ShouldBindJSON(&req); err != nil {
+				response.BadRequest(c, "invalid request: "+err.Error())
+				return
+			}
+			// Check if user exists
+			var user OASUser
+			if err := database.First(&user, req.UserID).Error; err != nil {
+				response.NotFound(c, "user not found")
+				return
+			}
+			// Check if already member
+			var existing model.UserOrganization
+			if err := database.Where("user_id = ? AND organization_id = ?", req.UserID, org.ID).First(&existing).Error; err == nil {
+				response.BadRequest(c, "user already member of this org")
+				return
+			}
+			member := model.UserOrganization{
+				UserID:         req.UserID,
+				OrganizationID: org.ID,
+				Role:           req.Role,
+			}
+			if err := database.Create(&member).Error; err != nil {
+				response.InternalError(c, "add member failed: "+err.Error())
+				return
+			}
+			operator, _ := c.Get("user_id")
+			database.Create(&AuditLog{
+				Plane:      "admin",
+				Action:     "org.member.add",
+				UserID:     fmt.Sprintf("%v", operator),
+				ResourceID: fmt.Sprintf("org-%d", org.ID),
+				Detail:     fmt.Sprintf("user_id=%d, role=%s", req.UserID, req.Role),
+				IP:         c.ClientIP(),
+			})
+			response.Created(c, member)
+		})
+
+		// Remove member from organization
+		adminOrgs.DELETE("/:id/members/:userId", func(c *gin.Context) {
+			idStr := c.Param("id")
+			userIdStr := c.Param("userId")
+			var org model.Organization
+			if err := database.First(&org, idStr).Error; err != nil {
+				response.NotFound(c, "org not found")
+				return
+			}
+			var member model.UserOrganization
+			if err := database.Where("organization_id = ? AND user_id = ?", org.ID, userIdStr).First(&member).Error; err != nil {
+				response.NotFound(c, "member not found")
+				return
+			}
+			if err := database.Delete(&member).Error; err != nil {
+				response.InternalError(c, "remove member failed: "+err.Error())
+				return
+			}
+			operator, _ := c.Get("user_id")
+			database.Create(&AuditLog{
+				Plane:      "admin",
+				Action:     "org.member.remove",
+				UserID:     fmt.Sprintf("%v", operator),
+				ResourceID: fmt.Sprintf("org-%d", org.ID),
+				Detail:     fmt.Sprintf("user_id=%s", userIdStr),
+				IP:         c.ClientIP(),
+			})
+			response.OK(c, gin.H{"message": "member removed"})
+		})
+	}
+
 	// ===== User Management Page (GET /admin/users) — JWT required =====
 	r.GET("/admin/users", func(c *gin.Context) {
 		if jwtVerifier == nil {
@@ -1437,6 +1691,37 @@ func main() {
 		}
 		c.Header("Content-Type", "text/html; charset=utf-8")
 		c.String(200, roleMgmtPageHTML())
+	})
+
+	// ===== Organization Management Page (GET /admin/orgs) — JWT required =====
+	r.GET("/admin/orgs", func(c *gin.Context) {
+		if jwtVerifier == nil {
+			c.Redirect(302, "/login?redirect=/admin/orgs")
+			return
+		}
+		tokenStr := c.Query("token")
+		if tokenStr == "" {
+			authHeader := c.GetHeader("Authorization")
+			if len(authHeader) > 7 && authHeader[:7] == "Bearer " {
+				tokenStr = authHeader[7:]
+			}
+		}
+		if tokenStr == "" {
+			c.Redirect(302, "/login?redirect=/admin/orgs")
+			return
+		}
+		claims, err := jwtVerifier.Verify(tokenStr)
+		if err != nil {
+			c.Redirect(302, "/login?redirect=/admin/orgs")
+			return
+		}
+		if !isInAdminWhitelistA(claims.Username) {
+			c.Header("Content-Type", "text/html; charset=utf-8")
+			c.String(403, "<h1>403 Forbidden</h1><p>Access denied. System management restricted to OU/AU/OAM admins.</p>")
+			return
+		}
+		c.Header("Content-Type", "text/html; charset=utf-8")
+		c.String(200, orgMgmtPageHTML())
 	})
 
 	port := v.GetString("server.http_port")
@@ -2415,6 +2700,205 @@ async function deleteRole(id,code){
 }
 
 loadRoles();
+</script>
+</body>
+</html>`
+}
+
+func orgMgmtPageHTML() string {
+	return `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>OAS Console - 组织管理</title>
+<script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-50">
+<div class="max-w-7xl mx-auto px-4 py-8">
+	<div class="mb-6">
+		<a href="/admin" class="text-blue-600 hover:underline">← 返回 Console</a>
+	</div>
+	<div class="bg-white rounded-lg shadow p-6">
+		<h1 class="text-2xl font-bold mb-6">组织管理</h1>
+		<div class="mb-4">
+			<button onclick="showCreateModal()" class="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700">新增组织</button>
+		</div>
+		<table class="w-full">
+			<thead class="bg-gray-100">
+				<tr>
+					<th class="px-4 py-2 text-left">组织编码</th>
+					<th class="px-4 py-2 text-left">组织名称</th>
+					<th class="px-4 py-2 text-left">域</th>
+					<th class="px-4 py-2 text-left">状态</th>
+					<th class="px-4 py-2 text-left">操作</th>
+				</tr>
+			</thead>
+			<tbody id="orgTable"></tbody>
+		</table>
+	</div>
+</div>
+
+<!-- Create/Edit Modal -->
+<div id="modal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center">
+	<div class="bg-white rounded-lg p-6 w-96">
+		<h2 id="modalTitle" class="text-xl font-bold mb-4">新增组织</h2>
+		<input type="hidden" id="editId">
+		<div class="mb-3">
+			<label class="block text-sm mb-1">组织编码</label>
+			<input id="orgCode" class="w-full border rounded px-3 py-2" placeholder="如 TAM-DEV">
+		</div>
+		<div class="mb-3">
+			<label class="block text-sm mb-1">组织名称</label>
+			<input id="orgName" class="w-full border rounded px-3 py-2" placeholder="如 技术域研发中心">
+		</div>
+		<div class="mb-3">
+			<label class="block text-sm mb-1">描述</label>
+			<textarea id="orgDesc" class="w-full border rounded px-3 py-2" rows="2"></textarea>
+		</div>
+		<div class="mb-3">
+			<label class="block text-sm mb-1">所属域</label>
+			<select id="orgDomain" class="w-full border rounded px-3 py-2">
+				<option value="">请选择</option>
+				<option value="T">T - 技术域 (TAM)</option>
+				<option value="H">H - 人资域 (HAM)</option>
+				<option value="Y">Y - 智场域 (YAM)</option>
+				<option value="O">O - 经营域 (OAM)</option>
+				<option value="A">A - 行政域 (AAM)</option>
+				<option value="F">F - 财务域 (FAM)</option>
+				<option value="V">V - 商务域 (VAM)</option>
+				<option value="G">G - 治理域 (GAM)</option>
+			</select>
+		</div>
+		<div class="mb-3">
+			<label class="block text-sm mb-1">父组织 ID（可选）</label>
+			<input id="orgParent" type="number" class="w-full border rounded px-3 py-2" placeholder="留空表示顶级组织">
+		</div>
+		<div class="flex justify-end gap-2">
+			<button onclick="closeModal()" class="px-4 py-2 border rounded">取消</button>
+			<button onclick="saveOrg()" class="px-4 py-2 bg-blue-600 text-white rounded">保存</button>
+		</div>
+	</div>
+</div>
+
+<script>
+const API='/api/v1';
+let orgs=[];
+
+async function loadOrgs(){
+	const r=await fetch(API+'/admin/orgs');
+	const d=await r.json();
+	if(d.code!==200){alert(d.message||'load failed');return}
+	orgs=d.data.items;
+	renderOrgs(orgs);
+}
+
+function renderOrgs(items){
+	if(!items||items.length===0){
+		document.getElementById('orgTable').innerHTML='<tr><td colspan="5" class="text-center py-8 text-gray-400">暂无数据</td></tr>';
+		return;
+	}
+	let html='';
+	for(const org of items){
+		const statusBadge=org.status==='active'?'<span class="bg-green-100 text-green-800 px-2 py-1 rounded text-xs">active</span>':'<span class="bg-gray-100 text-gray-800 px-2 py-1 rounded text-xs">inactive</span>';
+		html+='<tr class="border-b hover:bg-gray-50">';
+		html+='<td class="px-4 py-3 font-mono text-sm">'+org.code+'</td>';
+		html+='<td class="px-4 py-3">'+org.name+'</td>';
+		html+='<td class="px-4 py-3 text-sm">'+(org.domain||'-')+'</td>';
+		html+='<td class="px-4 py-3">'+statusBadge+'</td>';
+		html+='<td class="px-4 py-3">';
+		html+='<button onclick="editOrg('+org.id+')" class="text-blue-600 hover:underline mr-2">编辑</button>';
+		html+='<button onclick="viewMembers('+org.id+',\''+org.code+'\')" class="text-green-600 hover:underline mr-2">成员</button>';
+		html+='<button onclick="deleteOrg('+org.id+',\''+org.code+'\')" class="text-red-600 hover:underline">删除</button>';
+		html+='</td>';
+		html+='</tr>';
+		// Render children if any
+		if(org.children&&org.children.length>0){
+			for(const child of org.children){
+				const childStatus=child.status==='active'?'<span class="bg-green-100 text-green-800 px-2 py-1 rounded text-xs">active</span>':'<span class="bg-gray-100 text-gray-800 px-2 py-1 rounded text-xs">inactive</span>';
+				html+='<tr class="border-b hover:bg-gray-50 bg-gray-50">';
+				html+='<td class="px-4 py-3 pl-8 font-mono text-sm text-gray-600">└ '+child.code+'</td>';
+				html+='<td class="px-4 py-3 text-gray-600">'+child.name+'</td>';
+				html+='<td class="px-4 py-3 text-sm">'+(child.domain||'-')+'</td>';
+				html+='<td class="px-4 py-3">'+childStatus+'</td>';
+				html+='<td class="px-4 py-3">';
+				html+='<button onclick="editOrg('+child.id+')" class="text-blue-600 hover:underline mr-2">编辑</button>';
+				html+='<button onclick="viewMembers('+child.id+',\''+child.code+'\')" class="text-green-600 hover:underline mr-2">成员</button>';
+				html+='<button onclick="deleteOrg('+child.id+',\''+child.code+'\')" class="text-red-600 hover:underline">删除</button>';
+				html+='</td>';
+				html+='</tr>';
+			}
+		}
+	}
+	document.getElementById('orgTable').innerHTML=html;
+}
+
+function showCreateModal(){
+	document.getElementById('modalTitle').textContent='新增组织';
+	document.getElementById('editId').value='';
+	document.getElementById('orgCode').value='';
+	document.getElementById('orgCode').disabled=false;
+	document.getElementById('orgName').value='';
+	document.getElementById('orgDesc').value='';
+	document.getElementById('orgDomain').value='';
+	document.getElementById('orgParent').value='';
+	document.getElementById('modal').classList.remove('hidden');
+}
+
+function editOrg(id){
+	const org=orgs.find(o=>o.id===id);
+	if(!org)return;
+	document.getElementById('modalTitle').textContent='编辑组织';
+	document.getElementById('editId').value=id;
+	document.getElementById('orgCode').value=org.code;
+	document.getElementById('orgCode').disabled=true;
+	document.getElementById('orgName').value=org.name;
+	document.getElementById('orgDesc').value=org.description||'';
+	document.getElementById('orgDomain').value=org.domain||'';
+	document.getElementById('orgParent').value=org.parent_id||'';
+	document.getElementById('modal').classList.remove('hidden');
+}
+
+function closeModal(){
+	document.getElementById('modal').classList.add('hidden');
+}
+
+async function saveOrg(){
+	const id=document.getElementById('editId').value;
+	const data={
+		name:document.getElementById('orgName').value,
+		description:document.getElementById('orgDesc').value,
+		domain:document.getElementById('orgDomain').value,
+		parent_id:document.getElementById('orgParent').value?parseInt(document.getElementById('orgParent').value):null
+	};
+	if(!id){
+		data.code=document.getElementById('orgCode').value;
+		if(!data.code){alert('请输入组织编码');return}
+		const r=await fetch(API+'/admin/orgs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});
+		const d=await r.json();
+		if(d.code!==201){alert(d.message||'create failed');return}
+	}else{
+		const r=await fetch(API+'/admin/orgs/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});
+		const d=await r.json();
+		if(d.code!==200){alert(d.message||'update failed');return}
+	}
+	closeModal();
+	loadOrgs();
+}
+
+async function deleteOrg(id,code){
+	if(!confirm('确认删除组织 '+code+'？'))return;
+	const r=await fetch(API+'/admin/orgs/'+id,{method:'DELETE'});
+	const d=await r.json();
+	if(d.code!==200){alert(d.message||'delete failed');return}
+	loadOrgs();
+}
+
+async function viewMembers(id,code){
+	alert('成员管理功能待实现（1b-3 域过滤中间件完成后）');
+}
+
+loadOrgs();
 </script>
 </body>
 </html>`
