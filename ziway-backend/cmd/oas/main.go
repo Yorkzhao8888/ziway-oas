@@ -157,6 +157,24 @@ type OASUser struct {
 	DeletedAt    gorm.DeletedAt `gorm:"index" json:"-"`
 }
 
+// ApprovalRequest 战略审批单（L0 治理层）
+type ApprovalRequest struct {
+	ID          uint64      `gorm:"primarykey" json:"id"`
+	Title       string      `gorm:"size:200;not null" json:"title"`
+	Description string      `gorm:"type:text" json:"description"`
+	Type        string      `gorm:"size:50;not null;index" json:"type"` // high_privilege/org_delete/key_operation/federation
+	Status      string      `gorm:"size:20;not null;default:pending;index" json:"status"` // pending/approved/rejected/executed
+	RequesterID uint64      `gorm:"not null;index" json:"requester_id"`
+	ApproverID  *uint64     `json:"approver_id"`
+	CreatedAt   time.Time   `json:"created_at"`
+	UpdatedAt   time.Time   `json:"updated_at"`
+	ApprovedAt  *time.Time  `json:"approved_at"`
+	ExecutedAt  *time.Time  `json:"executed_at"`
+	Notes       string      `gorm:"type:text" json:"notes"`
+	Domain      string      `gorm:"size:8;index" json:"domain"`
+	Environment string      `gorm:"size:20" json:"environment"`
+}
+
 func (OASUser) TableName() string { return "users" }
 
 // OASRole / OASUserRole — 与 AMS 共享同一 DB 表。
@@ -208,6 +226,7 @@ func main() {
 		&GovernancePolicy{}, &ServiceRegistry{}, &APIKey{},
 		&RBACPolicy{}, &OASUser{}, &OASRole{}, &OASUserRole{},
 		&model.Organization{}, &model.UserOrganization{},
+		&ApprovalRequest{},
 	)
 
 	// Login rate limiter: 5 failures = 15 min lockout
@@ -773,6 +792,238 @@ func main() {
 			response.OK(c, result)
 		})
 
+		// ===== 战略审批工作台 (/admin/approvals) =====
+		admin.GET("/approvals", func(c *gin.Context) {
+			var approvals []ApprovalRequest
+			database.Order("created_at DESC").Find(&approvals)
+			response.OK(c, approvals)
+		})
+
+		admin.POST("/approvals", func(c *gin.Context) {
+			username, _ := c.Get("username")
+			userID, _ := c.Get("user_id")
+			domain, _ := c.Get("domain")
+			oasEnv, _ := c.Get("oas_env")
+			
+			// 仅 OU/AU 可发起审批
+			if username != "oas-ou-admin" && username != "oas-au-admin" {
+				response.Forbidden(c, "only OU/AU admin can create approvals")
+				return
+			}
+			
+			var req struct {
+				Title       string `json:"title" binding:"required"`
+				Description string `json:"description"`
+				Type        string `json:"type" binding:"required"`
+			}
+			if err := c.ShouldBindJSON(&req); err != nil {
+				response.BadRequest(c, err.Error())
+				return
+			}
+			
+			// 验证类型
+			validTypes := map[string]bool{
+				"high_privilege": true,
+				"org_delete":     true,
+				"key_operation":  true,
+				"federation":     true,
+			}
+			if !validTypes[req.Type] {
+				response.BadRequest(c, "invalid approval type")
+				return
+			}
+			
+			approval := ApprovalRequest{
+				Title:       req.Title,
+				Description: req.Description,
+				Type:        req.Type,
+				Status:      "pending",
+				RequesterID: userID.(uint64),
+				Domain:      domain.(string),
+				Environment: oasEnv.(string),
+			}
+			
+			if err := database.Create(&approval).Error; err != nil {
+				response.InternalError(c, "create approval failed: "+err.Error())
+				return
+			}
+			
+			// 审计日志
+			database.Create(&AuditLog{
+				UserID:      username.(string),
+				UserName:    username.(string),
+				Plane:       "admin",
+				Action:      "governance.approval.create",
+				Resource:    "approval_request",
+				ResourceID:  fmt.Sprintf("%d", approval.ID),
+				Detail:      fmt.Sprintf("type=%s, title=%s", approval.Type, approval.Title),
+				IP:          c.ClientIP(),
+				UserAgent:   c.Request.UserAgent(),
+				Environment: oasEnv.(string),
+				Domain:      domain.(string),
+			})
+			
+			response.Created(c, approval)
+		})
+
+		admin.PUT("/approvals/:id/approve", func(c *gin.Context) {
+			username, _ := c.Get("username")
+			userID, _ := c.Get("user_id")
+			domain, _ := c.Get("domain")
+			oasEnv, _ := c.Get("oas_env")
+			
+			// 仅 OU/AU 可审批
+			if username != "oas-ou-admin" && username != "oas-au-admin" {
+				response.Forbidden(c, "only OU/AU admin can approve")
+				return
+			}
+			
+			id, _ := parseUint(c.Param("id"))
+			var approval ApprovalRequest
+			if err := database.First(&approval, id).Error; err != nil {
+				response.NotFound(c, "approval not found")
+				return
+			}
+			
+			if approval.Status != "pending" {
+				response.BadRequest(c, "approval is not pending")
+				return
+			}
+			
+			now := time.Now()
+			approval.Status = "approved"
+			approval.ApproverID = ptrUint64(userID.(uint64))
+			approval.ApprovedAt = &now
+			
+			if err := database.Save(&approval).Error; err != nil {
+				response.InternalError(c, "approve failed: "+err.Error())
+				return
+			}
+			
+			// 审计日志
+			database.Create(&AuditLog{
+				UserID:      username.(string),
+				UserName:    username.(string),
+				Plane:       "admin",
+				Action:      "governance.approval.approve",
+				Resource:    "approval_request",
+				ResourceID:  fmt.Sprintf("%d", approval.ID),
+				Detail:      fmt.Sprintf("title=%s", approval.Title),
+				IP:          c.ClientIP(),
+				UserAgent:   c.Request.UserAgent(),
+				Environment: oasEnv.(string),
+				Domain:      domain.(string),
+			})
+			
+			response.OK(c, approval)
+		})
+
+		admin.PUT("/approvals/:id/reject", func(c *gin.Context) {
+			username, _ := c.Get("username")
+			userID, _ := c.Get("user_id")
+			domain, _ := c.Get("domain")
+			oasEnv, _ := c.Get("oas_env")
+			
+			// 仅 OU/AU 可拒绝
+			if username != "oas-ou-admin" && username != "oas-au-admin" {
+				response.Forbidden(c, "only OU/AU admin can reject")
+				return
+			}
+			
+			id, _ := parseUint(c.Param("id"))
+			var approval ApprovalRequest
+			if err := database.First(&approval, id).Error; err != nil {
+				response.NotFound(c, "approval not found")
+				return
+			}
+			
+			if approval.Status != "pending" {
+				response.BadRequest(c, "approval is not pending")
+				return
+			}
+			
+			var req struct {
+				Notes string `json:"notes"`
+			}
+			c.ShouldBindJSON(&req)
+			
+			approval.Status = "rejected"
+			approval.ApproverID = ptrUint64(userID.(uint64))
+			approval.Notes = req.Notes
+			
+			if err := database.Save(&approval).Error; err != nil {
+				response.InternalError(c, "reject failed: "+err.Error())
+				return
+			}
+			
+			// 审计日志
+			database.Create(&AuditLog{
+				UserID:      username.(string),
+				UserName:    username.(string),
+				Plane:       "admin",
+				Action:      "governance.approval.reject",
+				Resource:    "approval_request",
+				ResourceID:  fmt.Sprintf("%d", approval.ID),
+				Detail:      fmt.Sprintf("title=%s, notes=%s", approval.Title, req.Notes),
+				IP:          c.ClientIP(),
+				UserAgent:   c.Request.UserAgent(),
+				Environment: oasEnv.(string),
+				Domain:      domain.(string),
+			})
+			
+			response.OK(c, approval)
+		})
+
+		admin.PUT("/approvals/:id/execute", func(c *gin.Context) {
+			username, _ := c.Get("username")
+			domain, _ := c.Get("domain")
+			oasEnv, _ := c.Get("oas_env")
+			
+			// 仅 OU/AU 可标记执行
+			if username != "oas-ou-admin" && username != "oas-au-admin" {
+				response.Forbidden(c, "only OU/AU admin can execute")
+				return
+			}
+			
+			id, _ := parseUint(c.Param("id"))
+			var approval ApprovalRequest
+			if err := database.First(&approval, id).Error; err != nil {
+				response.NotFound(c, "approval not found")
+				return
+			}
+			
+			if approval.Status != "approved" {
+				response.BadRequest(c, "approval is not approved")
+				return
+			}
+			
+			now := time.Now()
+			approval.Status = "executed"
+			approval.ExecutedAt = &now
+			
+			if err := database.Save(&approval).Error; err != nil {
+				response.InternalError(c, "execute failed: "+err.Error())
+				return
+			}
+			
+			// 审计日志
+			database.Create(&AuditLog{
+				UserID:      username.(string),
+				UserName:    username.(string),
+				Plane:       "admin",
+				Action:      "governance.approval.execute",
+				Resource:    "approval_request",
+				ResourceID:  fmt.Sprintf("%d", approval.ID),
+				Detail:      fmt.Sprintf("title=%s", approval.Title),
+				IP:          c.ClientIP(),
+				UserAgent:   c.Request.UserAgent(),
+				Environment: oasEnv.(string),
+				Domain:      domain.(string),
+			})
+			
+			response.OK(c, approval)
+		})
+
 		// 系统配置
 		admin.GET("/configs", func(c *gin.Context) {
 			var items []SystemConfig
@@ -1061,6 +1312,38 @@ func main() {
 		}
 		c.Header("Content-Type", "text/html; charset=utf-8")
 		c.String(200, overviewPageHTML(username, oasEnv.String(), tokenStr))
+	})
+
+	// ===== GET /admin/approvals — 战略审批工作台（白名单 A：OU/AU/OAM，OAM 只读）=====
+	r.GET("/admin/approvals", func(c *gin.Context) {
+		if jwtVerifier == nil {
+			response.InternalError(c, "JWT verifier not configured")
+			return
+		}
+		tokenStr := c.Query("token")
+		if tokenStr == "" {
+			auth := c.GetHeader("Authorization")
+			if len(auth) > 7 && auth[:7] == "Bearer " {
+				tokenStr = auth[7:]
+			}
+		}
+		if tokenStr == "" {
+			c.Redirect(302, "/login?redirect=/admin/approvals")
+			return
+		}
+		claims, err := jwtVerifier.Verify(tokenStr)
+		if err != nil {
+			c.Redirect(302, "/login?redirect=/admin/approvals")
+			return
+		}
+		username := claims.Username
+		if !isInAdminWhitelistA(username) {
+			c.Header("Content-Type", "text/html; charset=utf-8")
+			c.String(403, "<h1>403 Forbidden</h1><p>Access restricted to system administrators.</p>")
+			return
+		}
+		c.Header("Content-Type", "text/html; charset=utf-8")
+		c.String(200, approvalsPageHTML(username, oasEnv.String(), tokenStr))
 	})
 
 	// ===== GET /admin/audit-logs — 审计日志页面（白名单 B：仅 2 admin）=====
@@ -1986,6 +2269,10 @@ func parseUint(s string) (uint64, error) {
 	return n, err
 }
 
+func ptrUint64(n uint64) *uint64 {
+	return &n
+}
+
 // regeneratePolicyCSV reads all active RBACPolicy from DB and writes the Casbin-compatible CSV.
 func regeneratePolicyCSV(database *gorm.DB, log *zap.Logger) {
 	var policies []RBACPolicy
@@ -2781,6 +3068,325 @@ fetch('/api/v1/admin/dashboard/stats', {
 }).catch(function(err){
 	document.getElementById('stats').innerHTML = '<div class="stat-card"><h3>加载失败: ' + err.message + '</h3></div>';
 });
+</script>
+</body>
+</html>`
+}
+
+// approvalsPageHTML returns the approvals workbench page HTML (whitelist A: OU/AU/OAM, OAM read-only).
+func approvalsPageHTML(username, oasEnv, token string) string {
+	isOUAU := username == "oas-ou-admin" || username == "oas-au-admin"
+	canWrite := "false"
+	if isOUAU {
+		canWrite = "true"
+	}
+	
+	return `<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>战略审批工作台 - OAS Console</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:#f3f4f6;color:#111827}
+.header{background:#1e40af;color:#fff;padding:16px 24px;display:flex;justify-content:space-between;align-items:center}
+.header h1{font-size:20px;font-weight:600}
+.header .env{background:rgba(255,255,255,0.2);padding:4px 12px;border-radius:12px;font-size:13px}
+.container{max-width:1200px;margin:24px auto;padding:0 24px}
+.card{background:#fff;border-radius:8px;box-shadow:0 1px 3px rgba(0,0,0,0.1);padding:20px;margin-bottom:20px}
+.card h2{font-size:16px;font-weight:600;margin-bottom:16px;color:#1e40af}
+.btn{padding:8px 16px;border:none;border-radius:6px;cursor:pointer;font-size:14px;font-weight:500;transition:all 0.2s}
+.btn-primary{background:#1e40af;color:#fff}
+.btn-primary:hover{background:#1e3a8a}
+.btn-success{background:#059669;color:#fff}
+.btn-success:hover{background:#047857}
+.btn-danger{background:#dc2626;color:#fff}
+.btn-danger:hover{background:#b91c1c}
+.btn-warning{background:#d97706;color:#fff}
+.btn-warning:hover{background:#b45309}
+.btn-sm{padding:4px 10px;font-size:12px}
+table{width:100%;border-collapse:collapse}
+th,td{padding:12px;text-align:left;border-bottom:1px solid #e5e7eb}
+th{background:#f9fafb;font-weight:600;font-size:13px;color:#6b7280}
+td{font-size:14px}
+.status{padding:4px 10px;border-radius:12px;font-size:12px;font-weight:500;display:inline-block}
+.status-pending{background:#fef3c7;color:#92400e}
+.status-approved{background:#d1fae5;color:#065f46}
+.status-rejected{background:#fee2e2;color:#991b1b}
+.status-executed{background:#dbeafe;color:#1e40af}
+.modal{display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.5);z-index:1000;justify-content:center;align-items:center}
+.modal.active{display:flex}
+.modal-content{background:#fff;border-radius:8px;padding:24px;max-width:500px;width:90%;max-height:90vh;overflow-y:auto}
+.modal-content h3{font-size:18px;font-weight:600;margin-bottom:16px}
+.form-group{margin-bottom:16px}
+.form-group label{display:block;font-size:14px;font-weight:500;margin-bottom:6px;color:#374151}
+.form-group input,.form-group select,.form-group textarea{width:100%;padding:8px 12px;border:1px solid #d1d5db;border-radius:6px;font-size:14px}
+.form-group textarea{resize:vertical;min-height:80px}
+.actions{display:flex;gap:8px;flex-wrap:wrap}
+.readonly-notice{background:#fef3c7;border:1px solid #fbbf24;border-radius:6px;padding:12px;margin-bottom:16px;color:#92400e;font-size:14px}
+.nav{display:flex;gap:16px;margin-bottom:24px}
+.nav a{color:#6b7280;text-decoration:none;font-size:14px;font-weight:500;padding:8px 16px;border-radius:6px}
+.nav a:hover{background:#f3f4f6;color:#111827}
+.nav a.active{background:#1e40af;color:#fff}
+</style>
+</head>
+<body>
+<div class="header">
+  <h1>战略审批工作台</h1>
+  <div class="env">` + oasEnv + `</div>
+</div>
+<div class="container">
+  <div class="nav">
+    <a href="/admin/overview?token=` + token + `">治理看板</a>
+    <a href="/admin/approvals?token=` + token + `" class="active">审批工作台</a>
+    <a href="/admin/audit-logs?token=` + token + `">审计日志</a>
+    <a href="/admin/users?token=` + token + `">用户管理</a>
+    <a href="/admin/roles?token=` + token + `">角色权限</a>
+    <a href="/admin/orgs?token=` + token + `">组织管理</a>
+  </div>
+  
+  ` + func() string {
+		if !isOUAU {
+			return `<div class="readonly-notice">您以只读身份访问（OAM），仅 OU/AU 管理员可发起/审批操作。</div>`
+		}
+		return ""
+	}() + `
+  
+  <div class="card">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+      <h2>审批单列表</h2>
+      ` + func() string {
+		if isOUAU {
+			return `<button class="btn btn-primary" onclick="showCreateModal()">+ 发起审批</button>`
+		}
+		return ""
+	}() + `
+    </div>
+    <table id="approvalsTable">
+      <thead>
+        <tr>
+          <th>ID</th>
+          <th>标题</th>
+          <th>类型</th>
+          <th>状态</th>
+          <th>发起人</th>
+          <th>创建时间</th>
+          <th>操作</th>
+        </tr>
+      </thead>
+      <tbody id="approvalsBody">
+        <tr><td colspan="7" style="text-align:center;padding:40px;color:#9ca3af">加载中...</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div id="createModal" class="modal">
+  <div class="modal-content">
+    <h3>发起战略审批</h3>
+    <div class="form-group">
+      <label>标题 *</label>
+      <input type="text" id="approvalTitle" placeholder="例：删除 YAM 域组织">
+    </div>
+    <div class="form-group">
+      <label>类型 *</label>
+      <select id="approvalType">
+        <option value="high_privilege">高权限授予</option>
+        <option value="org_delete">组织删除</option>
+        <option value="key_operation">密钥操作</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label>描述</label>
+      <textarea id="approvalDesc" placeholder="详细说明审批原因和背景"></textarea>
+    </div>
+    <div style="display:flex;gap:8px;justify-content:flex-end">
+      <button class="btn" onclick="closeCreateModal()">取消</button>
+      <button class="btn btn-primary" onclick="createApproval()">提交</button>
+    </div>
+  </div>
+</div>
+
+<div id="detailModal" class="modal">
+  <div class="modal-content">
+    <h3>审批单详情</h3>
+    <div id="detailContent"></div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
+      <button class="btn" onclick="closeDetailModal()">关闭</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const TOKEN = '` + token + `';
+const CAN_WRITE = ` + canWrite + `;
+
+function loadApprovals() {
+  fetch('/api/v1/admin/approvals', {
+    headers: { 'Authorization': 'Bearer ' + TOKEN }
+  })
+  .then(r => r.json())
+  .then(data => {
+    const tbody = document.getElementById('approvalsBody');
+    if (!data.data || data.data.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:40px;color:#9ca3af">暂无审批单</td></tr>';
+      return;
+    }
+    tbody.innerHTML = data.data.map(a => ` + "`" + `
+      <tr>
+        <td>${a.id}</td>
+        <td>${a.title}</td>
+        <td>${typeLabel(a.type)}</td>
+        <td><span class="status status-${a.status}">${statusLabel(a.status)}</span></td>
+        <td>${a.requester_id}</td>
+        <td>${new Date(a.created_at).toLocaleString('zh-CN')}</td>
+        <td class="actions">
+          <button class="btn btn-sm" onclick="showDetail(${a.id})">详情</button>
+          ${CAN_WRITE && a.status === 'pending' ? ` + "`" + `
+            <button class="btn btn-sm btn-success" onclick="approve(${a.id})">通过</button>
+            <button class="btn btn-sm btn-danger" onclick="reject(${a.id})">拒绝</button>
+          ` + "`" + ` : ''}
+          ${CAN_WRITE && a.status === 'approved' ? ` + "`" + `
+            <button class="btn btn-sm btn-warning" onclick="execute(${a.id})">标记执行</button>
+          ` + "`" + ` : ''}
+        </td>
+      </tr>
+    ` + "`" + `).join('');
+  });
+}
+
+function typeLabel(t) {
+  const map = { high_privilege: '高权限', org_delete: '组织删除', key_operation: '密钥操作', federation: '联邦节点' };
+  return map[t] || t;
+}
+
+function statusLabel(s) {
+  const map = { pending: '待审批', approved: '已通过', rejected: '已拒绝', executed: '已执行' };
+  return map[s] || s;
+}
+
+function showCreateModal() {
+  document.getElementById('createModal').classList.add('active');
+}
+
+function closeCreateModal() {
+  document.getElementById('createModal').classList.remove('active');
+}
+
+function createApproval() {
+  const title = document.getElementById('approvalTitle').value;
+  const type = document.getElementById('approvalType').value;
+  const description = document.getElementById('approvalDesc').value;
+  
+  if (!title) { alert('请输入标题'); return; }
+  
+  fetch('/api/v1/admin/approvals', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + TOKEN },
+    body: JSON.stringify({ title, type, description })
+  })
+  .then(r => r.json())
+  .then(data => {
+    if (data.code === 200) {
+      alert('审批单已创建');
+      closeCreateModal();
+      loadApprovals();
+    } else {
+      alert('创建失败: ' + (data.message || '未知错误'));
+    }
+  });
+}
+
+function showDetail(id) {
+  fetch('/api/v1/admin/approvals', {
+    headers: { 'Authorization': 'Bearer ' + TOKEN }
+  })
+  .then(r => r.json())
+  .then(data => {
+    const a = data.data.find(x => x.id === id);
+    if (!a) return;
+    
+    let html = ` + "`" + `
+      <div style="margin-bottom:12px"><strong>ID:</strong> ${a.id}</div>
+      <div style="margin-bottom:12px"><strong>标题:</strong> ${a.title}</div>
+      <div style="margin-bottom:12px"><strong>类型:</strong> ${typeLabel(a.type)}</div>
+      <div style="margin-bottom:12px"><strong>状态:</strong> <span class="status status-${a.status}">${statusLabel(a.status)}</span></div>
+      <div style="margin-bottom:12px"><strong>描述:</strong> ${a.description || '-'}</div>
+      <div style="margin-bottom:12px"><strong>发起人 ID:</strong> ${a.requester_id}</div>
+      <div style="margin-bottom:12px"><strong>审批人 ID:</strong> ${a.approver_id || '-'}</div>
+      <div style="margin-bottom:12px"><strong>创建时间:</strong> ${new Date(a.created_at).toLocaleString('zh-CN')}</div>
+      ${a.approved_at ? "<div style=\"margin-bottom:12px\"><strong>审批时间:</strong> " + new Date(a.approved_at).toLocaleString('zh-CN') + "</div>" : ''}
+      ${a.executed_at ? "<div style=\"margin-bottom:12px\"><strong>执行时间:</strong> " + new Date(a.executed_at).toLocaleString('zh-CN') + "</div>" : ''}
+      ${a.notes ? "<div style=\"margin-bottom:12px\"><strong>备注:</strong> " + a.notes + "</div>" : ''}
+    ` + "`" + `;
+    
+    document.getElementById('detailContent').innerHTML = html;
+    document.getElementById('detailModal').classList.add('active');
+  });
+}
+
+function closeDetailModal() {
+  document.getElementById('detailModal').classList.remove('active');
+}
+
+function approve(id) {
+  if (!confirm('确认通过此审批？')) return;
+  
+  fetch("/api/v1/admin/approvals/" + id + "/approve", {
+    method: 'PUT',
+    headers: { 'Authorization': 'Bearer ' + TOKEN }
+  })
+  .then(r => r.json())
+  .then(data => {
+    if (data.code === 200) {
+      alert('审批已通过');
+      loadApprovals();
+    } else {
+      alert('操作失败: ' + (data.message || '未知错误'));
+    }
+  });
+}
+
+function reject(id) {
+  const notes = prompt('请输入拒绝原因:');
+  if (notes === null) return;
+  
+  fetch("/api/v1/admin/approvals/" + id + "/reject", {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + TOKEN },
+    body: JSON.stringify({ notes })
+  })
+  .then(r => r.json())
+  .then(data => {
+    if (data.code === 200) {
+      alert('审批已拒绝');
+      loadApprovals();
+    } else {
+      alert('操作失败: ' + (data.message || '未知错误'));
+    }
+  });
+}
+
+function execute(id) {
+  if (!confirm('确认标记此审批为已执行？')) return;
+  
+  fetch("/api/v1/admin/approvals/" + id + "/execute", {
+    method: 'PUT',
+    headers: { 'Authorization': 'Bearer ' + TOKEN }
+  })
+  .then(r => r.json())
+  .then(data => {
+    if (data.code === 200) {
+      alert('已标记执行');
+      loadApprovals();
+    } else {
+      alert('操作失败: ' + (data.message || '未知错误'));
+    }
+  });
+}
+
+loadApprovals();
 </script>
 </body>
 </html>`
