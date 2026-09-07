@@ -249,6 +249,11 @@ func main() {
 		&ApprovalRequest{},
 	)
 
+	// Migrate existing admin accounts to have proper role_code
+	database.Model(&OASUser{}).Where("username = ? AND role_code = ?", "oas-ou-admin", "").Update("role_code", "SU")
+	database.Model(&OASUser{}).Where("username = ? AND role_code = ?", "oas-au-admin", "").Update("role_code", "AU")
+	database.Model(&OASUser{}).Where("username = ? AND role_code = ?", "oas-oam-admin", "").Update("role_code", "OAM")
+
 	// Login rate limiter: 5 failures = 15 min lockout
 	loginLimiter := ratelimit.NewLoginLimiter(5, 15*time.Minute)
 
@@ -1300,7 +1305,7 @@ func main() {
 			
 			// Check if it's an API key or whitelist B
 			authType, _ := c.Get("auth_type")
-			if authType != "api_key" && !isInAdminWhitelistB(usernameStr) {
+			if authType != "api_key" && !isInAdminWhitelistB(database,usernameStr) {
 				response.Forbidden(c, "only OU/AU admin can create admin accounts")
 				return
 			}
@@ -1624,7 +1629,7 @@ func main() {
 		// API Key 全生命周期管理 — 白名单 B (OU/AU)
 		admin.GET("/api-keys", func(c *gin.Context) {
 			username, _ := c.Get("username")
-			if !isInAdminWhitelistB(username.(string)) {
+			if !isInAdminWhitelistB(database,username.(string)) {
 				response.Forbidden(c, "access denied")
 				c.Abort()
 				return
@@ -1636,7 +1641,7 @@ func main() {
 		
 		admin.GET("/api-keys/:id", func(c *gin.Context) {
 			username, _ := c.Get("username")
-			if !isInAdminWhitelistB(username.(string)) {
+			if !isInAdminWhitelistB(database,username.(string)) {
 				response.Forbidden(c, "access denied")
 				c.Abort()
 				return
@@ -1652,7 +1657,7 @@ func main() {
 		
 		admin.POST("/api-keys", func(c *gin.Context) {
 			username, _ := c.Get("username")
-			if !isInAdminWhitelistB(username.(string)) {
+			if !isInAdminWhitelistB(database,username.(string)) {
 				response.Forbidden(c, "access denied")
 				c.Abort()
 				return
@@ -1718,7 +1723,7 @@ func main() {
 		
 		admin.PUT("/api-keys/:id/rotate", func(c *gin.Context) {
 			username, _ := c.Get("username")
-			if !isInAdminWhitelistB(username.(string)) {
+			if !isInAdminWhitelistB(database,username.(string)) {
 				response.Forbidden(c, "access denied")
 				c.Abort()
 				return
@@ -1799,7 +1804,7 @@ func main() {
 		
 		admin.PUT("/api-keys/:id/disable", func(c *gin.Context) {
 			username, _ := c.Get("username")
-			if !isInAdminWhitelistB(username.(string)) {
+			if !isInAdminWhitelistB(database,username.(string)) {
 				response.Forbidden(c, "access denied")
 				c.Abort()
 				return
@@ -1831,7 +1836,7 @@ func main() {
 		
 		admin.PUT("/api-keys/:id/enable", func(c *gin.Context) {
 			username, _ := c.Get("username")
-			if !isInAdminWhitelistB(username.(string)) {
+			if !isInAdminWhitelistB(database,username.(string)) {
 				response.Forbidden(c, "access denied")
 				c.Abort()
 				return
@@ -1869,7 +1874,7 @@ func main() {
 		
 		admin.DELETE("/api-keys/:id", func(c *gin.Context) {
 			username, _ := c.Get("username")
-			if !isInAdminWhitelistB(username.(string)) {
+			if !isInAdminWhitelistB(database,username.(string)) {
 				response.Forbidden(c, "access denied")
 				c.Abort()
 				return
@@ -1902,7 +1907,7 @@ func main() {
 		// Federation Node 联邦节点管理 — 白名单 B (OU/AU)
 		admin.GET("/federation-nodes", func(c *gin.Context) {
 			username, _ := c.Get("username")
-			if !isInAdminWhitelistB(username.(string)) {
+			if !isInAdminWhitelistB(database,username.(string)) {
 				response.Forbidden(c, "access denied")
 				c.Abort()
 				return
@@ -1914,7 +1919,7 @@ func main() {
 		
 		admin.GET("/federation-nodes/:id", func(c *gin.Context) {
 			username, _ := c.Get("username")
-			if !isInAdminWhitelistB(username.(string)) {
+			if !isInAdminWhitelistB(database,username.(string)) {
 				response.Forbidden(c, "access denied")
 				c.Abort()
 				return
@@ -1930,7 +1935,7 @@ func main() {
 		
 		admin.POST("/federation-nodes", func(c *gin.Context) {
 			username, _ := c.Get("username")
-			if !isInAdminWhitelistB(username.(string)) {
+			if !isInAdminWhitelistB(database,username.(string)) {
 				response.Forbidden(c, "access denied")
 				c.Abort()
 				return
@@ -1969,7 +1974,7 @@ func main() {
 		
 		admin.PUT("/federation-nodes/:id", func(c *gin.Context) {
 			username, _ := c.Get("username")
-			if !isInAdminWhitelistB(username.(string)) {
+			if !isInAdminWhitelistB(database,username.(string)) {
 				response.Forbidden(c, "access denied")
 				c.Abort()
 				return
@@ -2037,7 +2042,7 @@ func main() {
 		
 		admin.PUT("/federation-nodes/:id/suspend", func(c *gin.Context) {
 			username, _ := c.Get("username")
-			if !isInAdminWhitelistB(username.(string)) {
+			if !isInAdminWhitelistB(database,username.(string)) {
 				response.Forbidden(c, "access denied")
 				c.Abort()
 				return
@@ -2069,7 +2074,7 @@ func main() {
 		
 			admin.PUT("/federation-nodes/:id/activate", func(c *gin.Context) {
 			username, _ := c.Get("username")
-			if !isInAdminWhitelistB(username.(string)) {
+			if !isInAdminWhitelistB(database,username.(string)) {
 				response.Forbidden(c, "access denied")
 				c.Abort()
 				return
@@ -2101,7 +2106,7 @@ func main() {
 		
 		admin.PUT("/federation-nodes/:id/trust", func(c *gin.Context) {
 			username, _ := c.Get("username")
-			if !isInAdminWhitelistB(username.(string)) {
+			if !isInAdminWhitelistB(database,username.(string)) {
 				response.Forbidden(c, "access denied")
 				c.Abort()
 				return
@@ -2148,7 +2153,7 @@ func main() {
 		
 		admin.DELETE("/federation-nodes/:id", func(c *gin.Context) {
 			username, _ := c.Get("username")
-			if !isInAdminWhitelistB(username.(string)) {
+			if !isInAdminWhitelistB(database,username.(string)) {
 				response.Forbidden(c, "access denied")
 				c.Abort()
 				return
@@ -2191,7 +2196,7 @@ func main() {
 			}
 		}
 		
-		isWhitelistA := isInAdminWhitelistA(username.(string))
+		isWhitelistA := isInAdminWhitelistA(database,username.(string))
 		isXAM := false
 		for _, role := range roles {
 			if role == "TAM" || role == "HAM" || role == "YAM" || role == "VAM" {
@@ -2222,7 +2227,7 @@ func main() {
 			}
 			
 			// Check access: whitelist B (OU/AU) or XAM roles
-			isWhitelistB := isInAdminWhitelistB(username.(string))
+			isWhitelistB := isInAdminWhitelistB(database,username.(string))
 			isXAM := false
 			for _, role := range roles {
 				if role == "TAM" || role == "HAM" || role == "YAM" || role == "VAM" {
@@ -2369,7 +2374,7 @@ func main() {
 		}
 		// Check whitelist A
 		username := claims.Username
-		if !isInAdminWhitelistA(username) {
+		if !isInAdminWhitelistA(database,username) {
 			c.Header("Content-Type", "text/html; charset=utf-8")
 			c.String(403, "<h1>403 Forbidden</h1><p>Access restricted to system administrators.</p>")
 			return
@@ -2402,7 +2407,7 @@ func main() {
 			return
 		}
 		username := claims.Username
-		if !isInAdminWhitelistA(username) {
+		if !isInAdminWhitelistA(database,username) {
 			c.Header("Content-Type", "text/html; charset=utf-8")
 			c.String(403, "<h1>403 Forbidden</h1><p>Access restricted to system administrators.</p>")
 			return
@@ -2434,7 +2439,7 @@ func main() {
 			return
 		}
 		username := claims.Username
-		if !isInAdminWhitelistA(username) {
+		if !isInAdminWhitelistA(database,username) {
 			c.Header("Content-Type", "text/html; charset=utf-8")
 			c.String(403, "<h1>403 Forbidden</h1><p>Access restricted to system administrators.</p>")
 			return
@@ -2465,7 +2470,7 @@ func main() {
 			c.Redirect(302, "/login?redirect=/admin/ownership")
 			return
 		}
-		if !isInAdminWhitelistA(claims.Username) {
+		if !isInAdminWhitelistA(database,claims.Username) {
 			c.Header("Content-Type", "text/html; charset=utf-8")
 			c.String(403, "<h1>403 Forbidden</h1><p>Access restricted to whitelist A (OU/AU/OAM).</p>")
 			return
@@ -2626,7 +2631,7 @@ func main() {
 		}
 		// Whitelist B: only OU/AU admin can access audit logs
 		username := claims.Username
-		if !isInAdminWhitelistB(username) {
+		if !isInAdminWhitelistB(database,username) {
 			c.Header("Content-Type", "text/html; charset=utf-8")
 			c.String(403, "<h1>403 Forbidden</h1><p>Audit logs restricted to OU/AU admin.</p>")
 			return
@@ -2790,7 +2795,7 @@ func main() {
 		}
 		// 白名单 B：创建 admin 账号仅 OU/AU admin 可操作
 		operatorUsername, _ := c.Get("username")
-		if isAdminAccount(req.Username) && !canOperateAdminAccount(fmt.Sprintf("%v", operatorUsername)) {
+		if isAdminAccount(req.Username) && !canOperateAdminAccount(database,fmt.Sprintf("%v", operatorUsername)) {
 			response.Forbidden(c, "only oas-ou-admin and oas-au-admin can create admin accounts")
 			return
 		}
@@ -2866,7 +2871,7 @@ func main() {
 		var targetUser OASUser
 		database.First(&targetUser, id)
 		operatorUsername, _ := c.Get("username")
-		if isAdminAccount(targetUser.Username) && !canOperateAdminAccount(fmt.Sprintf("%v", operatorUsername)) {
+		if isAdminAccount(targetUser.Username) && !canOperateAdminAccount(database,fmt.Sprintf("%v", operatorUsername)) {
 			response.Forbidden(c, "only oas-ou-admin and oas-au-admin can modify admin account roles")
 			return
 		}
@@ -2911,7 +2916,7 @@ func main() {
 		var targetUser OASUser
 		database.First(&targetUser, id)
 		operatorUsername, _ := c.Get("username")
-		if isAdminAccount(targetUser.Username) && !canOperateAdminAccount(fmt.Sprintf("%v", operatorUsername)) {
+		if isAdminAccount(targetUser.Username) && !canOperateAdminAccount(database,fmt.Sprintf("%v", operatorUsername)) {
 			response.Forbidden(c, "only oas-ou-admin and oas-au-admin can modify admin account status")
 			return
 		}
@@ -3098,7 +3103,7 @@ func main() {
 				roles = strings.Split(rolesStr, ",")
 			}
 		}
-		if !canAccessOrgManagement(fmt.Sprintf("%v", username), roles) {
+		if !canAccessOrgManagement(database,fmt.Sprintf("%v", username), roles) {
 			response.Forbidden(c, "access denied")
 			c.Abort()
 			return
@@ -3498,7 +3503,7 @@ func main() {
 			c.Redirect(302, "/login?redirect=/admin/orgs")
 			return
 		}
-		if !isInAdminWhitelistA(claims.Username) {
+		if !isInAdminWhitelistA(database,claims.Username) {
 			c.Header("Content-Type", "text/html; charset=utf-8")
 			c.String(403, "<h1>403 Forbidden</h1><p>Access denied. System management restricted to OU/AU/OAM admins.</p>")
 			return
@@ -3657,25 +3662,49 @@ func isAdminAccount(username string) bool {
 }
 
 // canOperateAdminAccount checks if the operator can manage admin accounts (Whitelist B).
-func canOperateAdminAccount(operatorUsername string) bool {
-	return operatorUsername == "oas-ou-admin" || operatorUsername == "oas-au-admin"
+func canOperateAdminAccount(db *gorm.DB, operatorUsername string) bool {
+	// Check if username is an API key
+	if strings.HasPrefix(operatorUsername, "api-key:") {
+		return true // API keys have admin-level access
+	}
+	
+	// Query user's role_code from database
+	var user OASUser
+	if err := db.Where("username = ?", operatorUsername).First(&user).Error; err != nil {
+		return false
+	}
+	
+	// SU/OU/AU are admin-level roles
+	return user.RoleCode == "SU" || user.RoleCode == "OU" || user.RoleCode == "AU"
 }
 
 // isInAdminWhitelistB checks if the user is in Whitelist B (audit log access).
-func isInAdminWhitelistB(username string) bool {
-	return canOperateAdminAccount(username)
+func isInAdminWhitelistB(db *gorm.DB, username string) bool {
+	return canOperateAdminAccount(db, username)
 }
 
 // isInAdminWhitelistA checks if the user is in Whitelist A (system management access).
-func isInAdminWhitelistA(username string) bool {
-	return username == "oas-ou-admin" || username == "oas-au-admin" || username == "oas-oam-admin"
+func isInAdminWhitelistA(db *gorm.DB, username string) bool {
+	// Check if username is an API key
+	if strings.HasPrefix(username, "api-key:") {
+		return true // API keys have admin-level access
+	}
+	
+	// Query user's role_code from database
+	var user OASUser
+	if err := db.Where("username = ?", username).First(&user).Error; err != nil {
+		return false
+	}
+	
+	// SU/OU/AU/OAM are admin-level roles for whitelist A
+	return user.RoleCode == "SU" || user.RoleCode == "OU" || user.RoleCode == "AU" || user.RoleCode == "OAM"
 }
 
 // canAccessOrgManagement checks if a user can access organization management.
 // Allowed: OU/AU/OAM admins (whitelist A) + XAM roles (TAM/HAM/YAM/VAM).
-func canAccessOrgManagement(username string, roles []string) bool {
+func canAccessOrgManagement(db *gorm.DB, username string, roles []string) bool {
 	// Whitelist A users always allowed
-	if isInAdminWhitelistA(username) {
+	if isInAdminWhitelistA(db, username) {
 		return true
 	}
 	// XAM roles allowed (will be filtered by DomainFilter)
