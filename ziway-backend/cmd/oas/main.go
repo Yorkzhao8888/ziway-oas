@@ -805,8 +805,14 @@ func main() {
 			domain, _ := c.Get("domain")
 			oasEnv, _ := c.Get("oas_env")
 			
+			// 类型断言
+			usernameStr, _ := username.(string)
+			userIDUint, _ := userID.(uint64)
+			domainStr, _ := domain.(string)
+			oasEnvStr, _ := oasEnv.(string)
+			
 			// 仅 OU/AU 可发起审批
-			if username != "oas-ou-admin" && username != "oas-au-admin" {
+			if usernameStr != "oas-ou-admin" && usernameStr != "oas-au-admin" {
 				response.Forbidden(c, "only OU/AU admin can create approvals")
 				return
 			}
@@ -838,9 +844,9 @@ func main() {
 				Description: req.Description,
 				Type:        req.Type,
 				Status:      "pending",
-				RequesterID: userID.(uint64),
-				Domain:      domain.(string),
-				Environment: oasEnv.(string),
+				RequesterID: userIDUint,
+				Domain:      domainStr,
+				Environment: oasEnvStr,
 			}
 			
 			if err := database.Create(&approval).Error; err != nil {
@@ -850,8 +856,8 @@ func main() {
 			
 			// 审计日志
 			database.Create(&AuditLog{
-				UserID:      username.(string),
-				UserName:    username.(string),
+				UserID:      usernameStr,
+				UserName:    usernameStr,
 				Plane:       "admin",
 				Action:      "governance.approval.create",
 				Resource:    "approval_request",
@@ -859,8 +865,8 @@ func main() {
 				Detail:      fmt.Sprintf("type=%s, title=%s", approval.Type, approval.Title),
 				IP:          c.ClientIP(),
 				UserAgent:   c.Request.UserAgent(),
-				Environment: oasEnv.(string),
-				Domain:      domain.(string),
+				Environment: oasEnvStr,
+				Domain:      domainStr,
 			})
 			
 			response.Created(c, approval)
@@ -872,8 +878,14 @@ func main() {
 			domain, _ := c.Get("domain")
 			oasEnv, _ := c.Get("oas_env")
 			
+			// 类型断言
+			usernameStr, _ := username.(string)
+			userIDUint, _ := userID.(uint64)
+			domainStr, _ := domain.(string)
+			oasEnvStr, _ := oasEnv.(string)
+			
 			// 仅 OU/AU 可审批
-			if username != "oas-ou-admin" && username != "oas-au-admin" {
+			if usernameStr != "oas-ou-admin" && usernameStr != "oas-au-admin" {
 				response.Forbidden(c, "only OU/AU admin can approve")
 				return
 			}
@@ -892,7 +904,7 @@ func main() {
 			
 			now := time.Now()
 			approval.Status = "approved"
-			approval.ApproverID = ptrUint64(userID.(uint64))
+			approval.ApproverID = ptrUint64(userIDUint)
 			approval.ApprovedAt = &now
 			
 			if err := database.Save(&approval).Error; err != nil {
@@ -902,8 +914,8 @@ func main() {
 			
 			// 审计日志
 			database.Create(&AuditLog{
-				UserID:      username.(string),
-				UserName:    username.(string),
+				UserID:      usernameStr,
+				UserName:    usernameStr,
 				Plane:       "admin",
 				Action:      "governance.approval.approve",
 				Resource:    "approval_request",
@@ -911,8 +923,8 @@ func main() {
 				Detail:      fmt.Sprintf("title=%s", approval.Title),
 				IP:          c.ClientIP(),
 				UserAgent:   c.Request.UserAgent(),
-				Environment: oasEnv.(string),
-				Domain:      domain.(string),
+				Environment: oasEnvStr,
+				Domain:      domainStr,
 			})
 			
 			response.OK(c, approval)
@@ -924,8 +936,14 @@ func main() {
 			domain, _ := c.Get("domain")
 			oasEnv, _ := c.Get("oas_env")
 			
+			// 类型断言
+			usernameStr, _ := username.(string)
+			userIDUint, _ := userID.(uint64)
+			domainStr, _ := domain.(string)
+			oasEnvStr, _ := oasEnv.(string)
+			
 			// 仅 OU/AU 可拒绝
-			if username != "oas-ou-admin" && username != "oas-au-admin" {
+			if usernameStr != "oas-ou-admin" && usernameStr != "oas-au-admin" {
 				response.Forbidden(c, "only OU/AU admin can reject")
 				return
 			}
@@ -948,7 +966,7 @@ func main() {
 			c.ShouldBindJSON(&req)
 			
 			approval.Status = "rejected"
-			approval.ApproverID = ptrUint64(userID.(uint64))
+			approval.ApproverID = ptrUint64(userIDUint)
 			approval.Notes = req.Notes
 			
 			if err := database.Save(&approval).Error; err != nil {
@@ -958,8 +976,8 @@ func main() {
 			
 			// 审计日志
 			database.Create(&AuditLog{
-				UserID:      username.(string),
-				UserName:    username.(string),
+				UserID:      usernameStr,
+				UserName:    usernameStr,
 				Plane:       "admin",
 				Action:      "governance.approval.reject",
 				Resource:    "approval_request",
@@ -967,8 +985,8 @@ func main() {
 				Detail:      fmt.Sprintf("title=%s, notes=%s", approval.Title, req.Notes),
 				IP:          c.ClientIP(),
 				UserAgent:   c.Request.UserAgent(),
-				Environment: oasEnv.(string),
-				Domain:      domain.(string),
+				Environment: oasEnvStr,
+				Domain:      domainStr,
 			})
 			
 			response.OK(c, approval)
@@ -979,8 +997,13 @@ func main() {
 			domain, _ := c.Get("domain")
 			oasEnv, _ := c.Get("oas_env")
 			
+			// 类型断言
+			usernameStr, _ := username.(string)
+			domainStr, _ := domain.(string)
+			oasEnvStr, _ := oasEnv.(string)
+			
 			// 仅 OU/AU 可标记执行
-			if username != "oas-ou-admin" && username != "oas-au-admin" {
+			if usernameStr != "oas-ou-admin" && usernameStr != "oas-au-admin" {
 				response.Forbidden(c, "only OU/AU admin can execute")
 				return
 			}
@@ -1008,8 +1031,8 @@ func main() {
 			
 			// 审计日志
 			database.Create(&AuditLog{
-				UserID:      username.(string),
-				UserName:    username.(string),
+				UserID:      usernameStr,
+				UserName:    usernameStr,
 				Plane:       "admin",
 				Action:      "governance.approval.execute",
 				Resource:    "approval_request",
@@ -1017,8 +1040,8 @@ func main() {
 				Detail:      fmt.Sprintf("title=%s", approval.Title),
 				IP:          c.ClientIP(),
 				UserAgent:   c.Request.UserAgent(),
-				Environment: oasEnv.(string),
-				Domain:      domain.(string),
+				Environment: oasEnvStr,
+				Domain:      domainStr,
 			})
 			
 			response.OK(c, approval)
