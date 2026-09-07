@@ -68,3 +68,39 @@ ziway-backend/
 - BOS（cmd/os）启动强校验安全三件套：`configs/public_key.pem` + `configs/rbac_model.conf` + `configs/rbac_policy.csv`，任一缺失 → fail-closed 拒绝启动
 - JWT 中间件 Redis 黑名单检查为可选（rdb=nil 时跳过），不影响 JWT 验签本身
 - `/health` 端点公开，`/api/v1/*` 全部需要 JWT + RBAC
+
+## OAS Console 治理平面功能
+
+### 2a 批次（已完成）
+- **域所有权管理**：GET /admin/ownership（白名单A）
+- **战略审批流程**：POST/GET/DELETE /admin/approvals（白名单A）
+- **审批单删除**：DELETE /admin/approvals/:id（白名单B）
+- **域分布统计**：全域 0 计数兜底，避免空数据
+
+### 2b 批次（已完成）
+- **2b-1 Admin 账号管理**：
+  - GET/POST /admin/admin-accounts（列表/创建）
+  - PUT /admin/admin-accounts/:id/disable|enable|reset-password
+  - 复用 users 表（role_code=OU/AU），bcrypt 密码哈希
+  - 系统配置只读面板：GET /system-config（不暴露敏感信息）
+  - HTML 页面：/admin/admin-accounts、/admin/system-config
+
+- **2b-2 API Key 全生命周期管理**：
+  - GET/POST/PUT/DELETE /admin/api-keys
+  - 原子轮换：PUT /admin/api-keys/:id/rotate（事务：旧key禁用+新key激活）
+  - 密钥生成：bcrypt 哈希，前缀 oas_，明文仅返回一次
+  - 过期校验：调用侧检查，过期 key 不可启用
+  - HTML 页面：/admin/api-keys
+
+- **2b-3 联邦节点管理**：
+  - GET/POST/PUT/DELETE /admin/federation-nodes
+  - 状态管理：PUT /admin/federation-nodes/:id/suspend|activate
+  - 信任级别：basic/standard/full 三档
+  - 节点属性：NodeName/NodeID/TrustLevel/PublicKey/Endpoint/Capabilities
+  - HTML 页面：/admin/federation-nodes
+
+### 权限模型
+- **白名单 A**：OU + AU（最高权限，可管理审批单）
+- **白名单 B**：仅 OU/AU admin（管理账号、API Key、联邦节点）
+- **XAM 角色**：TAM/HAM/YAM/VAM（域隔离，本域数据）
+- **审计全覆盖**：所有操作入 audit_logs，含 Domain 字段
