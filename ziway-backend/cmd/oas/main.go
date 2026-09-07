@@ -1232,6 +1232,147 @@ func main() {
 		response.OK(c, result)
 	})
 
+	// ===== Role Management API (JWT + Whitelist A) =====
+	adminRoles := api.Group("/admin/roles")
+	if jwtVerifier != nil {
+		adminRoles.Use(middleware.JWTAuth(jwtVerifier, nil, log))
+		adminRoles.Use(middleware.RequireUsers("oas-ou-admin", "oas-au-admin", "oas-oam-admin"))
+	}
+	// GET /api/v1/admin/roles — list all roles
+	adminRoles.GET("", func(c *gin.Context) {
+		var roles []OASRole
+		database.Order("role_code").Find(&roles)
+		type RoleDetail struct {
+			ID          uint64  `json:"id"`
+			RoleCode    string  `json:"role_code"`
+			Name        string  `json:"name"`
+			Description string  `json:"description"`
+			Permissions string  `json:"permissions"`
+			CreatedAt   string  `json:"created_at"`
+			UpdatedAt   string  `json:"updated_at"`
+		}
+		var result []RoleDetail
+		for _, r := range roles {
+			result = append(result, RoleDetail{
+				ID:          r.ID,
+				RoleCode:    r.RoleCode,
+				Name:        r.Name,
+				Description: r.Description,
+				Permissions: r.Permissions,
+				CreatedAt:   r.CreatedAt.Format(time.RFC3339),
+				UpdatedAt:   r.UpdatedAt.Format(time.RFC3339),
+			})
+		}
+		response.OK(c, gin.H{"items": result, "total": len(result)})
+	})
+
+	// POST /api/v1/admin/roles — create role
+	adminRoles.POST("", func(c *gin.Context) {
+		var req struct {
+			RoleCode    string `json:"role_code" binding:"required"`
+			Name        string `json:"name" binding:"required"`
+			Description string `json:"description"`
+			Permissions string `json:"permissions"`
+		}
+		if err := c.ShouldBindJSON(&req); err != nil {
+			response.BadRequest(c, "invalid request: "+err.Error())
+			return
+		}
+		role := OASRole{
+			RoleCode:    req.RoleCode,
+			Name:        req.Name,
+			Description: req.Description,
+			Permissions: req.Permissions,
+		}
+		if err := database.Create(&role).Error; err != nil {
+			response.InternalError(c, "create role failed: "+err.Error())
+			return
+		}
+		// Audit log
+		operator, _ := c.Get("username")
+		database.Create(&AuditLog{
+			Action:     "role.create",
+			Plane:      "admin",
+			UserID:     fmt.Sprintf("%v", operator),
+			ResourceID: fmt.Sprintf("role-%d", role.ID),
+			Detail:     fmt.Sprintf("role_code=%s, name=%s", role.RoleCode, role.Name),
+			IP:         c.ClientIP(),
+		})
+		response.Created(c, gin.H{"id": role.ID, "role_code": role.RoleCode, "name": role.Name})
+	})
+
+	// PUT /api/v1/admin/roles/:id — update role
+	adminRoles.PUT("/:id", func(c *gin.Context) {
+		id := c.Param("id")
+		var role OASRole
+		if err := database.First(&role, id).Error; err != nil {
+			response.NotFound(c, "role not found")
+			return
+		}
+		var req struct {
+			Name        string `json:"name"`
+			Description string `json:"description"`
+			Permissions string `json:"permissions"`
+		}
+		if err := c.ShouldBindJSON(&req); err != nil {
+			response.BadRequest(c, "invalid request: "+err.Error())
+			return
+		}
+		updates := map[string]interface{}{}
+		if req.Name != "" {
+			updates["name"] = req.Name
+		}
+		if req.Description != "" {
+			updates["description"] = req.Description
+		}
+		if req.Permissions != "" {
+			updates["permissions"] = req.Permissions
+		}
+		if len(updates) > 0 {
+			database.Model(&role).Updates(updates)
+		}
+		// Audit log
+		operator, _ := c.Get("username")
+		database.Create(&AuditLog{
+			Action:     "role.update",
+			Plane:      "admin",
+			UserID:     fmt.Sprintf("%v", operator),
+			ResourceID: fmt.Sprintf("role-%s", id),
+			Detail:     fmt.Sprintf("updates=%v", updates),
+			IP:         c.ClientIP(),
+		})
+		response.OK(c, gin.H{"message": "role updated"})
+	})
+
+	// DELETE /api/v1/admin/roles/:id — delete role
+	adminRoles.DELETE("/:id", func(c *gin.Context) {
+		id := c.Param("id")
+		var role OASRole
+		if err := database.First(&role, id).Error; err != nil {
+			response.NotFound(c, "role not found")
+			return
+		}
+		// Check if role is assigned to any users
+		var count int64
+		database.Table("user_roles").Where("role_id = ?", id).Count(&count)
+		if count > 0 {
+			response.BadRequest(c, fmt.Sprintf("role is assigned to %d users, cannot delete", count))
+			return
+		}
+		database.Delete(&role, id)
+		// Audit log
+		operator, _ := c.Get("username")
+		database.Create(&AuditLog{
+			Action:     "role.delete",
+			Plane:      "admin",
+			UserID:     fmt.Sprintf("%v", operator),
+			ResourceID: fmt.Sprintf("role-%s", id),
+			Detail:     fmt.Sprintf("role_code=%s", role.RoleCode),
+			IP:         c.ClientIP(),
+		})
+		response.OK(c, gin.H{"message": "role deleted"})
+	})
+
 	// ===== User Management Page (GET /admin/users) — JWT required =====
 	r.GET("/admin/users", func(c *gin.Context) {
 		if jwtVerifier == nil {
@@ -1263,6 +1404,39 @@ func main() {
 		}
 		c.Header("Content-Type", "text/html; charset=utf-8")
 		c.String(200, userMgmtPageHTML())
+	})
+
+	// ===== Role Management Page (GET /admin/roles) — JWT required =====
+	r.GET("/admin/roles", func(c *gin.Context) {
+		if jwtVerifier == nil {
+			response.InternalError(c, "jwt verifier not configured")
+			return
+		}
+		// Support both ?token= parameter and Authorization header
+		tokenStr := c.Query("token")
+		if tokenStr == "" {
+			authHeader := c.GetHeader("Authorization")
+			if len(authHeader) > 7 && authHeader[:7] == "Bearer " {
+				tokenStr = authHeader[7:]
+			}
+		}
+		if tokenStr == "" {
+			c.Redirect(302, "/login?redirect=/admin/roles")
+			return
+		}
+		claims, err := jwtVerifier.Verify(tokenStr)
+		if err != nil {
+			c.Redirect(302, "/login?redirect=/admin/roles")
+			return
+		}
+		// 白名单 A：系统管理访问 = OU-admin + AU-admin + OAM
+		if claims.Username != "oas-ou-admin" && claims.Username != "oas-au-admin" && claims.Username != "oas-oam-admin" {
+			c.Header("Content-Type", "text/html; charset=utf-8")
+			c.String(403, "<h1>403 Forbidden</h1><p>Access denied. System management restricted to OU/AU/OAM admins.</p>")
+			return
+		}
+		c.Header("Content-Type", "text/html; charset=utf-8")
+		c.String(200, roleMgmtPageHTML())
 	})
 
 	port := v.GetString("server.http_port")
@@ -2081,6 +2255,166 @@ function changePage(page){
 }
 
 loadLogs();
+</script>
+</body>
+</html>`
+}
+
+func roleMgmtPageHTML() string {
+	return `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>OAS Console - 角色权限管理</title>
+<script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-50">
+<div class="max-w-7xl mx-auto px-4 py-8">
+	<div class="mb-6">
+		<a href="/admin" class="text-blue-600 hover:underline">← 返回 Console</a>
+	</div>
+	<div class="bg-white rounded-lg shadow p-6">
+		<h1 class="text-2xl font-bold mb-6">角色权限管理</h1>
+		<div class="mb-4">
+			<button onclick="showCreateModal()" class="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700">新增角色</button>
+		</div>
+		<table class="w-full">
+			<thead class="bg-gray-100">
+				<tr>
+					<th class="px-4 py-2 text-left">角色编码</th>
+					<th class="px-4 py-2 text-left">角色名称</th>
+					<th class="px-4 py-2 text-left">描述</th>
+					<th class="px-4 py-2 text-left">权限点</th>
+					<th class="px-4 py-2 text-left">操作</th>
+				</tr>
+			</thead>
+			<tbody id="roleTable"></tbody>
+		</table>
+	</div>
+</div>
+
+<!-- Create/Edit Modal -->
+<div id="modal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center">
+	<div class="bg-white rounded-lg p-6 w-96">
+		<h2 id="modalTitle" class="text-xl font-bold mb-4">新增角色</h2>
+		<input type="hidden" id="editId">
+		<div class="mb-3">
+			<label class="block text-sm mb-1">角色编码</label>
+			<input id="roleCode" class="w-full border rounded px-3 py-2" placeholder="如 TAM">
+		</div>
+		<div class="mb-3">
+			<label class="block text-sm mb-1">角色名称</label>
+			<input id="roleName" class="w-full border rounded px-3 py-2" placeholder="如 技术域管理员">
+		</div>
+		<div class="mb-3">
+			<label class="block text-sm mb-1">描述</label>
+			<textarea id="roleDesc" class="w-full border rounded px-3 py-2" rows="2"></textarea>
+		</div>
+		<div class="mb-3">
+			<label class="block text-sm mb-1">权限点（JSON 数组）</label>
+			<textarea id="rolePerms" class="w-full border rounded px-3 py-2 font-mono text-sm" rows="3" placeholder='["sys:user:read","tam:org:manage"]'></textarea>
+		</div>
+		<div class="flex justify-end gap-2">
+			<button onclick="closeModal()" class="px-4 py-2 border rounded">取消</button>
+			<button onclick="saveRole()" class="px-4 py-2 bg-blue-600 text-white rounded">保存</button>
+		</div>
+	</div>
+</div>
+
+<script>
+const API='/api/v1';
+let roles=[];
+
+async function loadRoles(){
+	const r=await fetch(API+'/admin/roles');
+	const d=await r.json();
+	if(d.code!==200){alert(d.message||'load failed');return}
+	roles=d.data.items;
+	renderRoles(roles);
+}
+
+function renderRoles(items){
+	if(!items||items.length===0){
+		document.getElementById('roleTable').innerHTML='<tr><td colspan="5" class="text-center py-8 text-gray-400">暂无数据</td></tr>';
+		return;
+	}
+	let html='';
+	for(const role of items){
+		const perms=role.permissions?role.permissions.substring(0,50)+(role.permissions.length>50?'...':''):'-';
+		html+='<tr class="border-b hover:bg-gray-50">';
+		html+='<td class="px-4 py-3 font-mono text-sm">'+role.role_code+'</td>';
+		html+='<td class="px-4 py-3">'+role.name+'</td>';
+		html+='<td class="px-4 py-3 text-sm text-gray-600">'+(role.description||'-')+'</td>';
+		html+='<td class="px-4 py-3 text-xs font-mono">'+perms+'</td>';
+		html+='<td class="px-4 py-3">';
+		html+='<button onclick="editRole('+role.id+')" class="text-blue-600 hover:underline mr-2">编辑</button>';
+		html+='<button onclick="deleteRole('+role.id+',\''+role.role_code+'\')" class="text-red-600 hover:underline">删除</button>';
+		html+='</td>';
+		html+='</tr>';
+	}
+	document.getElementById('roleTable').innerHTML=html;
+}
+
+function showCreateModal(){
+	document.getElementById('modalTitle').textContent='新增角色';
+	document.getElementById('editId').value='';
+	document.getElementById('roleCode').value='';
+	document.getElementById('roleCode').disabled=false;
+	document.getElementById('roleName').value='';
+	document.getElementById('roleDesc').value='';
+	document.getElementById('rolePerms').value='';
+	document.getElementById('modal').classList.remove('hidden');
+}
+
+function editRole(id){
+	const role=roles.find(r=>r.id===id);
+	if(!role)return;
+	document.getElementById('modalTitle').textContent='编辑角色';
+	document.getElementById('editId').value=id;
+	document.getElementById('roleCode').value=role.role_code;
+	document.getElementById('roleCode').disabled=true;
+	document.getElementById('roleName').value=role.name;
+	document.getElementById('roleDesc').value=role.description||'';
+	document.getElementById('rolePerms').value=role.permissions||'';
+	document.getElementById('modal').classList.remove('hidden');
+}
+
+function closeModal(){
+	document.getElementById('modal').classList.add('hidden');
+}
+
+async function saveRole(){
+	const id=document.getElementById('editId').value;
+	const data={
+		name:document.getElementById('roleName').value,
+		description:document.getElementById('roleDesc').value,
+		permissions:document.getElementById('rolePerms').value
+	};
+	if(!id){
+		data.role_code=document.getElementById('roleCode').value;
+		if(!data.role_code){alert('请输入角色编码');return}
+		const r=await fetch(API+'/admin/roles',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});
+		const d=await r.json();
+		if(d.code!==201){alert(d.message||'create failed');return}
+	}else{
+		const r=await fetch(API+'/admin/roles/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});
+		const d=await r.json();
+		if(d.code!==200){alert(d.message||'update failed');return}
+	}
+	closeModal();
+	loadRoles();
+}
+
+async function deleteRole(id,code){
+	if(!confirm('确认删除角色 '+code+'？'))return;
+	const r=await fetch(API+'/admin/roles/'+id,{method:'DELETE'});
+	const d=await r.json();
+	if(d.code!==200){alert(d.message||'delete failed');return}
+	loadRoles();
+}
+
+loadRoles();
 </script>
 </body>
 </html>`
