@@ -1401,9 +1401,9 @@ func main() {
 
 		// Get organization detail
 		adminOrgs.GET("/:id", func(c *gin.Context) {
-			idStr := c.Param("id")
+			id, _ := parseUint(c.Param("id"))
 			var org model.Organization
-			if err := database.Preload("Parent").Preload("Children").Preload("Members").First(&org, idStr).Error; err != nil {
+			if err := database.Preload("Parent").Preload("Children").Preload("Members").First(&org, id).Error; err != nil {
 				response.NotFound(c, "org not found")
 				return
 			}
@@ -1449,9 +1449,9 @@ func main() {
 
 		// Update organization
 		adminOrgs.PUT("/:id", func(c *gin.Context) {
-			idStr := c.Param("id")
+			id, _ := parseUint(c.Param("id"))
 			var org model.Organization
-			if err := database.First(&org, idStr).Error; err != nil {
+			if err := database.First(&org, id).Error; err != nil {
 				response.NotFound(c, "org not found")
 				return
 			}
@@ -1500,9 +1500,9 @@ func main() {
 
 		// Delete organization
 		adminOrgs.DELETE("/:id", func(c *gin.Context) {
-			idStr := c.Param("id")
+			id, _ := parseUint(c.Param("id"))
 			var org model.Organization
-			if err := database.First(&org, idStr).Error; err != nil {
+			if err := database.First(&org, id).Error; err != nil {
 				response.NotFound(c, "org not found")
 				return
 			}
@@ -1538,9 +1538,9 @@ func main() {
 
 		// Get organization members
 		adminOrgs.GET("/:id/members", func(c *gin.Context) {
-			idStr := c.Param("id")
+			id, _ := parseUint(c.Param("id"))
 			var members []model.UserOrganization
-			if err := database.Where("organization_id = ?", idStr).Find(&members).Error; err != nil {
+			if err := database.Where("organization_id = ?", id).Find(&members).Error; err != nil {
 				response.InternalError(c, "load members failed: "+err.Error())
 				return
 			}
@@ -1549,9 +1549,9 @@ func main() {
 
 		// Add member to organization
 		adminOrgs.POST("/:id/members", func(c *gin.Context) {
-			idStr := c.Param("id")
+			id, _ := parseUint(c.Param("id"))
 			var org model.Organization
-			if err := database.First(&org, idStr).Error; err != nil {
+			if err := database.First(&org, id).Error; err != nil {
 				response.NotFound(c, "org not found")
 				return
 			}
@@ -1598,15 +1598,15 @@ func main() {
 
 		// Remove member from organization
 		adminOrgs.DELETE("/:id/members/:userId", func(c *gin.Context) {
-			idStr := c.Param("id")
-			userIdStr := c.Param("userId")
+			id, _ := parseUint(c.Param("id"))
+			userId, _ := parseUint(c.Param("userId"))
 			var org model.Organization
-			if err := database.First(&org, idStr).Error; err != nil {
+			if err := database.First(&org, id).Error; err != nil {
 				response.NotFound(c, "org not found")
 				return
 			}
 			var member model.UserOrganization
-			if err := database.Where("organization_id = ? AND user_id = ?", org.ID, userIdStr).First(&member).Error; err != nil {
+			if err := database.Where("organization_id = ? AND user_id = ?", org.ID, userId).First(&member).Error; err != nil {
 				response.NotFound(c, "member not found")
 				return
 			}
@@ -1620,7 +1620,7 @@ func main() {
 				Action:     "org.member.remove",
 				UserID:     fmt.Sprintf("%v", operator),
 				ResourceID: fmt.Sprintf("org-%d", org.ID),
-				Detail:     fmt.Sprintf("user_id=%s", userIdStr),
+				Detail:     fmt.Sprintf("user_id=%d", userId),
 				IP:         c.ClientIP(),
 			})
 			response.OK(c, gin.H{"message": "member removed"})
