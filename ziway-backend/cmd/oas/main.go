@@ -831,8 +831,8 @@ func main() {
 			return
 		}
 		
-		// Check if user has admin role
-		if user.RoleCode != "SU" && user.RoleCode != "OU" && user.RoleCode != "AU" {
+		// Check if user has admin role (whitelist A: SU/OU/AU/OAM)
+		if user.RoleCode != "SU" && user.RoleCode != "OU" && user.RoleCode != "AU" && user.RoleCode != "OAM" {
 			response.Forbidden(c, "access denied: admin role required")
 			return
 		}
@@ -1293,7 +1293,7 @@ func main() {
 		})
 
 		// ===== Admin 账号管理（2b-1）=====
-		// 列表（仅 OU/AU）
+		// 列表（白名单 B: SU/OU/AU）
 		admin.GET("/admin-accounts", func(c *gin.Context) {
 			username, _ := c.Get("username")
 			usernameStr, _ := username.(string)
@@ -1301,9 +1301,9 @@ func main() {
 			// Check if it's an API key
 			authType, _ := c.Get("auth_type")
 			if authType != "api_key" {
-				// 仅 OU/AU 可访问
-				if usernameStr != "oas-ou-admin" && usernameStr != "oas-au-admin" {
-					response.Forbidden(c, "only OU/AU admin can manage admin accounts")
+				// 白名单 B: SU/OU/AU
+				if !isInAdminWhitelistB(database, usernameStr) {
+					response.Forbidden(c, "only SU/OU/AU admin can manage admin accounts")
 					return
 				}
 			}
@@ -1567,14 +1567,14 @@ func main() {
 			response.OK(c, gin.H{"message": "password reset successfully"})
 		})
 
-		// 系统配置只读面板（仅 OU/AU）
+		// 系统配置只读面板（白名单 B: SU/OU/AU）
 		admin.GET("/system-config", func(c *gin.Context) {
 			username, _ := c.Get("username")
 			usernameStr, _ := username.(string)
 			
-			// 仅 OU/AU 可访问
-			if usernameStr != "oas-ou-admin" && usernameStr != "oas-au-admin" {
-				response.Forbidden(c, "only OU/AU admin can view system config")
+			// 白名单 B: SU/OU/AU
+			if !isInAdminWhitelistB(database, usernameStr) {
+				response.Forbidden(c, "only SU/OU/AU admin can view system config")
 				return
 			}
 			
