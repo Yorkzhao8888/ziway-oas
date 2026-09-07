@@ -750,8 +750,69 @@ func main() {
 		log.Fatal("admin routes require JWT verifier, but it is not initialized")
 	}
 	admin := api.Group("/admin")
-	admin.Use(middleware.JWTAuth(jwtVerifier, nil, log))
-	admin.Use(middleware.RequireUsers("oas-ou-admin", "oas-au-admin", "oas-oam-admin"))
+	// Combined JWT + API Key authentication
+	admin.Use(func(c *gin.Context) {
+		// Try API Key first
+		var apiKeyStr string
+		
+		// Check Authorization header (Bearer)
+		authHeader := c.GetHeader("Authorization")
+		if strings.HasPrefix(authHeader, "Bearer ") {
+			apiKeyStr = authHeader[7:]
+		}
+		
+		// Check X-API-Key header
+		if apiKeyStr == "" {
+			apiKeyStr = c.GetHeader("X-API-Key")
+		}
+		
+		// Check api_key query parameter
+		if apiKeyStr == "" {
+			apiKeyStr = c.Query("api_key")
+		}
+		
+		if apiKeyStr != "" {
+			// Extract prefix (first part before _)
+			parts := strings.SplitN(apiKeyStr, "_", 3)
+			if len(parts) >= 2 {
+				prefix := parts[0] + "_" + parts[1]
+				
+				// Look up API key by prefix
+				var key APIKey
+				if err := database.Where("key_prefix = ?", prefix).First(&key).Error; err == nil {
+					// Check status
+					if key.Status == "active" {
+						// Check expiry
+						if key.ExpiresAt == nil || !key.ExpiresAt.Before(time.Now()) {
+							// Verify key hash
+							if err := bcrypt.CompareHashAndPassword([]byte(key.KeyHash), []byte(apiKeyStr)); err == nil {
+								// API Key auth succeeded
+								c.Set("api_key_id", key.ID)
+								c.Set("api_key_name", key.KeyName)
+								c.Set("api_key_scopes", key.Scopes)
+								c.Set("auth_type", "api_key")
+								c.Set("username", "api-key:"+key.KeyName)
+								c.Next()
+								return
+							}
+						}
+					}
+				}
+			}
+		}
+		
+		// Otherwise, try JWT
+		middleware.JWTAuth(jwtVerifier, nil, log)(c)
+	})
+	// Allow API keys or specific admin users
+	admin.Use(func(c *gin.Context) {
+		authType, _ := c.Get("auth_type")
+		if authType == "api_key" {
+			c.Next()
+			return
+		}
+		middleware.RequireUsers("oas-ou-admin", "oas-au-admin", "oas-oam-admin")(c)
+	})
 	{
 		// ===== 治理看板 (/admin/dashboard/*) =====
 		admin.GET("/dashboard/stats", func(c *gin.Context) {
@@ -1211,14 +1272,19 @@ func main() {
 			username, _ := c.Get("username")
 			usernameStr, _ := username.(string)
 			
-			// 仅 OU/AU 可访问
-			if usernameStr != "oas-ou-admin" && usernameStr != "oas-au-admin" {
-				response.Forbidden(c, "only OU/AU admin can manage admin accounts")
-				return
+			// Check if it's an API key
+			authType, _ := c.Get("auth_type")
+			if authType != "api_key" {
+				// 仅 OU/AU 可访问
+				if usernameStr != "oas-ou-admin" && usernameStr != "oas-au-admin" {
+					response.Forbidden(c, "only OU/AU admin can manage admin accounts")
+					return
+				}
 			}
 			
 			var admins []OASUser
-			database.Where("role_code IN ?", []string{"OU", "AU"}).Find(&admins)
+			// Include all admin-level roles: OU, AU, SU
+			database.Where("role_code IN ?", []string{"OU", "AU", "SU"}).Find(&admins)
 			response.OK(c, admins)
 		})
 		
@@ -1232,8 +1298,9 @@ func main() {
 			domainStr, _ := domain.(string)
 			oasEnvStr, _ := oasEnv.(string)
 			
-			// 仅 OU/AU 可创建
-			if usernameStr != "oas-ou-admin" && usernameStr != "oas-au-admin" {
+			// Check if it's an API key or whitelist B
+			authType, _ := c.Get("auth_type")
+			if authType != "api_key" && !isInAdminWhitelistB(usernameStr) {
 				response.Forbidden(c, "only OU/AU admin can create admin accounts")
 				return
 			}
@@ -2000,7 +2067,7 @@ func main() {
 			response.OK(c, gin.H{"message": "node suspended"})
 		})
 		
-		admin.PUT("/federation-nodes/:id/activate", func(c *gin.Context) {
+			admin.PUT("/federation-nodes/:id/activate", func(c *gin.Context) {
 			username, _ := c.Get("username")
 			if !isInAdminWhitelistB(username.(string)) {
 				response.Forbidden(c, "access denied")
@@ -2030,6 +2097,53 @@ func main() {
 			})
 			
 			response.OK(c, gin.H{"message": "node activated"})
+		})
+		
+		admin.PUT("/federation-nodes/:id/trust", func(c *gin.Context) {
+			username, _ := c.Get("username")
+			if !isInAdminWhitelistB(username.(string)) {
+				response.Forbidden(c, "access denied")
+				c.Abort()
+				return
+			}
+			
+			id := c.Param("id")
+			var node FederationNode
+			if err := database.First(&node, id).Error; err != nil {
+				response.NotFound(c, "node not found")
+				return
+			}
+			
+			var req struct {
+				TrustLevel string `json:"trust_level" binding:"required"`
+			}
+			if err := c.ShouldBindJSON(&req); err != nil {
+				response.BadRequest(c, "trust_level required")
+				return
+			}
+			
+			// Validate trust level
+			if req.TrustLevel != "basic" && req.TrustLevel != "standard" && req.TrustLevel != "full" {
+				response.BadRequest(c, "trust_level must be basic, standard, or full")
+				return
+			}
+			
+			oldTrust := node.TrustLevel
+			database.Model(&node).Update("trust_level", req.TrustLevel)
+			
+			// Audit log
+			database.Create(&AuditLog{
+				UserID:     username.(string),
+				UserName:   username.(string),
+				Plane:      "admin",
+				Action:     "governance.federation.trust",
+				Resource:   "federation_node",
+				ResourceID: id,
+				Detail:     fmt.Sprintf("changed trust level from %s to %s for node: %s", oldTrust, req.TrustLevel, node.NodeName),
+				Domain:     "OAS",
+			})
+			
+			response.OK(c, gin.H{"message": "trust level updated", "old_trust": oldTrust, "new_trust": req.TrustLevel})
 		})
 		
 		admin.DELETE("/federation-nodes/:id", func(c *gin.Context) {
@@ -2424,6 +2538,70 @@ func main() {
 		c.String(200, systemConfigPageHTML(claims.Username))
 	})
 
+	// API Key 管理页面（仅 OU/AU）
+	r.GET("/admin/api-keys", func(c *gin.Context) {
+		if jwtVerifier == nil {
+			response.InternalError(c, "JWT verifier not configured")
+			return
+		}
+		tokenStr := c.Query("token")
+		if tokenStr == "" {
+			auth := c.GetHeader("Authorization")
+			if len(auth) > 7 && auth[:7] == "Bearer " {
+				tokenStr = auth[7:]
+			}
+		}
+		if tokenStr == "" {
+			c.Redirect(302, "/login?redirect=/admin/api-keys")
+			return
+		}
+		claims, err := jwtVerifier.Verify(tokenStr)
+		if err != nil {
+			c.Redirect(302, "/login?redirect=/admin/api-keys")
+			return
+		}
+		// 仅 OU/AU 可访问（白名单 B）
+		if claims.Username != "oas-ou-admin" && claims.Username != "oas-au-admin" {
+			c.Header("Content-Type", "text/html; charset=utf-8")
+			c.String(403, "<h1>403 Forbidden</h1><p>Access restricted to OU/AU admin.</p>")
+			return
+		}
+		c.Header("Content-Type", "text/html; charset=utf-8")
+		c.String(200, apiKeysPageHTML(claims.Username))
+	})
+
+	// 联邦节点管理页面（仅 OU/AU）
+	r.GET("/admin/federation-nodes", func(c *gin.Context) {
+		if jwtVerifier == nil {
+			response.InternalError(c, "JWT verifier not configured")
+			return
+		}
+		tokenStr := c.Query("token")
+		if tokenStr == "" {
+			auth := c.GetHeader("Authorization")
+			if len(auth) > 7 && auth[:7] == "Bearer " {
+				tokenStr = auth[7:]
+			}
+		}
+		if tokenStr == "" {
+			c.Redirect(302, "/login?redirect=/admin/federation-nodes")
+			return
+		}
+		claims, err := jwtVerifier.Verify(tokenStr)
+		if err != nil {
+			c.Redirect(302, "/login?redirect=/admin/federation-nodes")
+			return
+		}
+		// 仅 OU/AU 可访问（白名单 B）
+		if claims.Username != "oas-ou-admin" && claims.Username != "oas-au-admin" {
+			c.Header("Content-Type", "text/html; charset=utf-8")
+			c.String(403, "<h1>403 Forbidden</h1><p>Access restricted to OU/AU admin.</p>")
+			return
+		}
+		c.Header("Content-Type", "text/html; charset=utf-8")
+		c.String(200, federationNodesPageHTML(claims.Username))
+	})
+
 	// ===== GET /admin/audit-logs — 审计日志页面（白名单 B：仅 2 admin）=====
 	r.GET("/admin/audit-logs", func(c *gin.Context) {
 		if jwtVerifier == nil {
@@ -2502,6 +2680,10 @@ func main() {
 			Joins("JOIN roles r ON r.id = user_roles.role_id").
 			Where("user_roles.user_id = ?", user.ID).
 			Pluck("r.role_code", &roles)
+		// If no roles in user_roles, fall back to role_code from OASUser
+		if len(roles) == 0 && user.RoleCode != "" {
+			roles = []string{user.RoleCode}
+		}
 		activeRole := ""
 		if len(roles) > 0 {
 			activeRole = roles[0]
