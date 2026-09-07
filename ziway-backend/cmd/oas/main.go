@@ -714,6 +714,65 @@ func main() {
 	admin.Use(middleware.JWTAuth(jwtVerifier, nil, log))
 	admin.Use(middleware.RequireUsers("oas-ou-admin", "oas-au-admin", "oas-oam-admin"))
 	{
+		// ===== 治理看板 (/admin/dashboard/*) =====
+		admin.GET("/dashboard/stats", func(c *gin.Context) {
+			username, _ := c.Get("username")
+			
+			// 用户统计（仅 active）
+			var usersTotal int64
+			database.Model(&OASUser{}).Where("status = ?", "active").Count(&usersTotal)
+			
+			// 组织统计
+			var orgsTotal int64
+			database.Model(&model.Organization{}).Count(&orgsTotal)
+			
+			// 角色统计
+			var rolesTotal int64
+			database.Model(&OASRole{}).Count(&rolesTotal)
+			
+			// 域分布（基于 organizations）
+			type DomainCount struct {
+				Domain string `json:"domain"`
+				Count  int64  `json:"count"`
+			}
+			var domainDistribution []DomainCount
+			database.Model(&model.Organization{}).
+				Select("domain, COUNT(*) as count").
+				Group("domain").
+				Scan(&domainDistribution)
+			
+			// 审计摘要（仅 2admin 可见明细，OAM 只返回统计）
+			isOUAU := username == "oas-ou-admin" || username == "oas-au-admin"
+			
+			result := gin.H{
+				"users_total":         usersTotal,
+				"orgs_total":          orgsTotal,
+				"roles_total":         rolesTotal,
+				"domain_distribution": domainDistribution,
+			}
+			
+			if isOUAU {
+				// 2admin 可见审计明细
+				var recentAudits []AuditLog
+				database.Order("created_at DESC").Limit(10).Find(&recentAudits)
+				
+				type ActionCount struct {
+					Action string `json:"action"`
+					Count  int64  `json:"count"`
+				}
+				var auditSummary []ActionCount
+				database.Model(&AuditLog{}).
+					Select("action, COUNT(*) as count").
+					Group("action").
+					Scan(&auditSummary)
+				
+				result["recent_audits"] = recentAudits
+				result["audit_summary"] = auditSummary
+			}
+			
+			response.OK(c, result)
+		})
+
 		// 系统配置
 		admin.GET("/configs", func(c *gin.Context) {
 			var items []SystemConfig
@@ -969,6 +1028,39 @@ func main() {
 		}
 		c.Header("Content-Type", "text/html; charset=utf-8")
 		c.String(200, consoleHomePageHTML(username, oasEnv.String(), tokenStr))
+	})
+
+	// ===== GET /admin/overview — OU 治理看板 =====
+	// Requires JWT + whitelist A (OU/AU/OAM)
+	r.GET("/admin/overview", func(c *gin.Context) {
+		if jwtVerifier == nil {
+			response.InternalError(c, "JWT verifier not configured")
+			return
+		}
+		tokenStr := c.Query("token")
+		if tokenStr == "" {
+			auth := c.GetHeader("Authorization")
+			if len(auth) > 7 && auth[:7] == "Bearer " {
+				tokenStr = auth[7:]
+			}
+		}
+		if tokenStr == "" {
+			c.Redirect(302, "/login?redirect=/admin/overview")
+			return
+		}
+		claims, err := jwtVerifier.Verify(tokenStr)
+		if err != nil {
+			c.Redirect(302, "/login?redirect=/admin/overview")
+			return
+		}
+		username := claims.Username
+		if !isInAdminWhitelistA(username) {
+			c.Header("Content-Type", "text/html; charset=utf-8")
+			c.String(403, "<h1>403 Forbidden</h1><p>Access restricted to system administrators.</p>")
+			return
+		}
+		c.Header("Content-Type", "text/html; charset=utf-8")
+		c.String(200, overviewPageHTML(username, oasEnv.String(), tokenStr))
 	})
 
 	// ===== GET /admin/audit-logs — 审计日志页面（白名单 B：仅 2 admin）=====
@@ -2587,6 +2679,109 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;b
 		</a>
 	</div>
 </div>
+</body>
+</html>`
+}
+
+// overviewPageHTML returns the OU governance overview dashboard HTML.
+// overviewPageHTML returns the OU governance overview dashboard HTML.
+func overviewPageHTML(username, oasEnv, token string) string {
+	return `<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>OU 治理看板 - OAS Console</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:#f3f4f6;color:#111827}
+.header{background:#fff;border-bottom:1px solid #e5e7eb;padding:16px 24px;display:flex;align-items:center;justify-content:space-between}
+.header h1{font-size:18px;font-weight:600}
+.user-info{font-size:13px;color:#6b7280}
+.container{max-width:1200px;margin:24px auto;padding:0 24px}
+.env-badge{display:inline-block;padding:4px 12px;border-radius:9999px;font-size:12px;font-weight:600;margin-left:12px}
+.env-DEV{background:#dbeafe;color:#1e40af}
+.env-BETA{background:#fef3c7;color:#92400e}
+.env-RC{background:#e0e7ff;color:#3730a3}
+.env-PROD{background:#fee2e2;color:#991b1b}
+.stats-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:16px;margin-bottom:32px}
+.stat-card{background:#fff;border-radius:12px;box-shadow:0 1px 3px rgba(0,0,0,.1);padding:20px}
+.stat-card h3{font-size:13px;color:#6b7280;font-weight:500;margin-bottom:8px}
+.stat-card .value{font-size:32px;font-weight:700;color:#111827}
+.stat-card .sub{font-size:12px;color:#9ca3af;margin-top:4px}
+.section{background:#fff;border-radius:12px;box-shadow:0 1px 3px rgba(0,0,0,.1);padding:24px;margin-bottom:24px}
+.section h2{font-size:16px;font-weight:600;margin-bottom:16px;display:flex;align-items:center;gap:8px}
+.domain-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:12px}
+.domain-item{background:#f9fafb;border-radius:8px;padding:12px;text-align:center}
+.domain-item .code{font-size:14px;font-weight:600;color:#374151}
+.domain-item .count{font-size:24px;font-weight:700;color:#2563eb;margin-top:4px}
+.audit-list{list-style:none}
+.audit-list li{padding:12px 0;border-bottom:1px solid #f3f4f6;font-size:13px}
+.audit-list li:last-child{border-bottom:none}
+.audit-list .time{color:#9ca3af;font-size:12px}
+.audit-list .action{font-weight:500;color:#374151}
+.audit-list .user{color:#6b7280}
+.breadcrumb{font-size:13px;color:#6b7280;margin-bottom:16px}
+.breadcrumb a{color:#2563eb;text-decoration:none}
+</style>
+</head>
+<body>
+<div class="header">
+	<h1>OU 治理看板 <span class="env-badge env-` + oasEnv + `">` + oasEnv + `</span></h1>
+	<div class="user-info">` + username + ` | <a href="/admin?token=` + token + `" style="color:#2563eb;text-decoration:none">返回 Console</a></div>
+</div>
+<div class="container">
+	<div class="breadcrumb"><a href="/admin?token=` + token + `">Console</a> / 治理看板</div>
+	
+	<div class="stats-grid" id="stats">
+		<div class="stat-card"><h3>加载中...</h3></div>
+	</div>
+	
+	<div class="section">
+		<h2>🌐 域分布</h2>
+		<div class="domain-grid" id="domains">
+			<div class="domain-item"><div class="code">加载中...</div></div>
+		</div>
+	</div>
+	
+	<div class="section" id="audit-section" style="display:none">
+		<h2>📋 近期审计（仅 2 admin 可见）</h2>
+		<ul class="audit-list" id="audits"></ul>
+	</div>
+</div>
+
+<script>
+var token = '` + token + `';
+var isOUAU = ('` + username + `' === 'oas-ou-admin' || '` + username + `' === 'oas-au-admin');
+
+fetch('/api/v1/admin/dashboard/stats', {
+	headers: {'Authorization': 'Bearer ' + token}
+}).then(function(r){ return r.json(); }).then(function(data){
+	if(data.code !== 200){
+		document.getElementById('stats').innerHTML = '<div class="stat-card"><h3>加载失败</h3></div>';
+		return;
+	}
+	var d = data.data;
+	document.getElementById('stats').innerHTML = '<div class="stat-card"><h3>启用账号</h3><div class="value">'+d.users_total+'</div><div class="sub">active users</div></div><div class="stat-card"><h3>组织总数</h3><div class="value">'+d.orgs_total+'</div><div class="sub">organizations</div></div><div class="stat-card"><h3>角色总数</h3><div class="value">'+d.roles_total+'</div><div class="sub">roles</div></div>';
+	
+	if(d.domain_distribution && d.domain_distribution.length > 0){
+		document.getElementById('domains').innerHTML = d.domain_distribution.map(function(item){
+			return '<div class="domain-item"><div class="code">'+(item.domain || '(未分配)')+'</div><div class="count">'+item.count+'</div></div>';
+		}).join('');
+	}else{
+		document.getElementById('domains').innerHTML = '<div class="domain-item"><div class="code">暂无数据</div></div>';
+	}
+	
+	if(isOUAU && d.recent_audits && d.recent_audits.length > 0){
+		document.getElementById('audit-section').style.display = 'block';
+		document.getElementById('audits').innerHTML = d.recent_audits.map(function(a){
+			return '<li><span class="time">'+new Date(a.created_at).toLocaleString('zh-CN')+'</span> <span class="action">'+a.action+'</span> by <span class="user">'+(a.username || 'system')+'</span>'+(a.domain ? ' ['+a.domain+']' : '')+'</li>';
+		}).join('');
+	}
+}).catch(function(err){
+	document.getElementById('stats').innerHTML = '<div class="stat-card"><h3>加载失败: ' + err.message + '</h3></div>';
+});
+</script>
 </body>
 </html>`
 }
