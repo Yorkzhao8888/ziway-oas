@@ -124,6 +124,22 @@ type APIKey struct {
 	DeletedAt  gorm.DeletedAt `gorm:"index" json:"-"`
 }
 
+// FederationNode 联邦节点管理（2b-3）
+type FederationNode struct {
+	ID           uint64         `gorm:"primarykey" json:"id"`
+	NodeName     string         `gorm:"size:64" json:"node_name"`
+	NodeID       string         `gorm:"uniqueIndex;size:64" json:"node_id"`
+	TrustLevel   string         `gorm:"size:16;default:basic" json:"trust_level"` // basic/standard/full
+	Status       string         `gorm:"size:16;default:active" json:"status"`     // active/inactive/suspended
+	PublicKey    string         `gorm:"type:text" json:"public_key"`
+	Endpoint     string         `gorm:"size:256" json:"endpoint"`
+	Capabilities string         `gorm:"type:text" json:"capabilities"`
+	CreatedBy    string         `gorm:"size:32" json:"created_by"`
+	CreatedAt    time.Time      `json:"created_at"`
+	UpdatedAt    time.Time      `json:"updated_at"`
+	DeletedAt    gorm.DeletedAt `gorm:"index" json:"-"`
+}
+
 // RBACPolicy OAS 权威源 — 唯一 RBAC 策略存储。
 // PolicyType 固定为 "rbac"；OAS 为策略唯一写入点，变更后同步 CSV 供 OS 加载。
 type RBACPolicy struct {
@@ -228,7 +244,7 @@ func main() {
 	database.AutoMigrate(
 		&SystemConfig{}, &AuditLog{}, &DomainRegistry{},
 		&GovernancePolicy{}, &ServiceRegistry{}, &APIKey{},
-		&RBACPolicy{}, &OASUser{}, &OASRole{}, &OASUserRole{},
+		&FederationNode{}, &RBACPolicy{}, &OASUser{}, &OASRole{}, &OASUserRole{},
 		&model.Organization{}, &model.UserOrganization{},
 		&ApprovalRequest{},
 	)
@@ -1814,6 +1830,238 @@ func main() {
 			})
 			
 			response.OK(c, gin.H{"message": "key deleted"})
+		})
+
+		// Federation Node 联邦节点管理 — 白名单 B (OU/AU)
+		admin.GET("/federation-nodes", func(c *gin.Context) {
+			username, _ := c.Get("username")
+			if !isInAdminWhitelistB(username.(string)) {
+				response.Forbidden(c, "access denied")
+				c.Abort()
+				return
+			}
+			var items []FederationNode
+			database.Order("created_at DESC").Find(&items)
+			response.OK(c, items)
+		})
+		
+		admin.GET("/federation-nodes/:id", func(c *gin.Context) {
+			username, _ := c.Get("username")
+			if !isInAdminWhitelistB(username.(string)) {
+				response.Forbidden(c, "access denied")
+				c.Abort()
+				return
+			}
+			id := c.Param("id")
+			var node FederationNode
+			if err := database.First(&node, id).Error; err != nil {
+				response.NotFound(c, "node not found")
+				return
+			}
+			response.OK(c, node)
+		})
+		
+		admin.POST("/federation-nodes", func(c *gin.Context) {
+			username, _ := c.Get("username")
+			if !isInAdminWhitelistB(username.(string)) {
+				response.Forbidden(c, "access denied")
+				c.Abort()
+				return
+			}
+			
+			var node FederationNode
+			if err := c.ShouldBindJSON(&node); err != nil {
+				response.BadRequest(c, "invalid request")
+				return
+			}
+			
+			// Validate trust level
+			if node.TrustLevel != "basic" && node.TrustLevel != "standard" && node.TrustLevel != "full" {
+				response.BadRequest(c, "trust_level must be basic, standard, or full")
+				return
+			}
+			
+			node.CreatedBy = username.(string)
+			node.Status = "active"
+			database.Create(&node)
+			
+			// Audit log
+			database.Create(&AuditLog{
+				UserID:     username.(string),
+				UserName:   username.(string),
+				Plane:      "admin",
+				Action:     "governance.federation.create",
+				Resource:   "federation_node",
+				ResourceID: fmt.Sprintf("%d", node.ID),
+				Detail:     fmt.Sprintf("registered federation node: %s (trust: %s)", node.NodeName, node.TrustLevel),
+				Domain:     "OAS",
+			})
+			
+			response.Created(c, node)
+		})
+		
+		admin.PUT("/federation-nodes/:id", func(c *gin.Context) {
+			username, _ := c.Get("username")
+			if !isInAdminWhitelistB(username.(string)) {
+				response.Forbidden(c, "access denied")
+				c.Abort()
+				return
+			}
+			
+			id := c.Param("id")
+			var node FederationNode
+			if err := database.First(&node, id).Error; err != nil {
+				response.NotFound(c, "node not found")
+				return
+			}
+			
+			var req struct {
+				NodeName     string `json:"node_name"`
+				TrustLevel   string `json:"trust_level"`
+				PublicKey    string `json:"public_key"`
+				Endpoint     string `json:"endpoint"`
+				Capabilities string `json:"capabilities"`
+			}
+			if err := c.ShouldBindJSON(&req); err != nil {
+				response.BadRequest(c, "invalid request")
+				return
+			}
+			
+			// Validate trust level
+			if req.TrustLevel != "" && req.TrustLevel != "basic" && req.TrustLevel != "standard" && req.TrustLevel != "full" {
+				response.BadRequest(c, "trust_level must be basic, standard, or full")
+				return
+			}
+			
+			updates := map[string]interface{}{}
+			if req.NodeName != "" {
+				updates["node_name"] = req.NodeName
+			}
+			if req.TrustLevel != "" {
+				updates["trust_level"] = req.TrustLevel
+			}
+			if req.PublicKey != "" {
+				updates["public_key"] = req.PublicKey
+			}
+			if req.Endpoint != "" {
+				updates["endpoint"] = req.Endpoint
+			}
+			if req.Capabilities != "" {
+				updates["capabilities"] = req.Capabilities
+			}
+			
+			database.Model(&node).Updates(updates)
+			
+			// Audit log
+			database.Create(&AuditLog{
+				UserID:     username.(string),
+				UserName:   username.(string),
+				Plane:      "admin",
+				Action:     "governance.federation.update",
+				Resource:   "federation_node",
+				ResourceID: id,
+				Detail:     fmt.Sprintf("updated federation node: %s", node.NodeName),
+				Domain:     "OAS",
+			})
+			
+			database.First(&node, id)
+			response.OK(c, node)
+		})
+		
+		admin.PUT("/federation-nodes/:id/suspend", func(c *gin.Context) {
+			username, _ := c.Get("username")
+			if !isInAdminWhitelistB(username.(string)) {
+				response.Forbidden(c, "access denied")
+				c.Abort()
+				return
+			}
+			
+			id := c.Param("id")
+			var node FederationNode
+			if err := database.First(&node, id).Error; err != nil {
+				response.NotFound(c, "node not found")
+				return
+			}
+			
+			database.Model(&node).Update("status", "suspended")
+			
+			// Audit log
+			database.Create(&AuditLog{
+				UserID:     username.(string),
+				UserName:   username.(string),
+				Plane:      "admin",
+				Action:     "governance.federation.suspend",
+				Resource:   "federation_node",
+				ResourceID: id,
+				Detail:     fmt.Sprintf("suspended federation node: %s", node.NodeName),
+				Domain:     "OAS",
+			})
+			
+			response.OK(c, gin.H{"message": "node suspended"})
+		})
+		
+		admin.PUT("/federation-nodes/:id/activate", func(c *gin.Context) {
+			username, _ := c.Get("username")
+			if !isInAdminWhitelistB(username.(string)) {
+				response.Forbidden(c, "access denied")
+				c.Abort()
+				return
+			}
+			
+			id := c.Param("id")
+			var node FederationNode
+			if err := database.First(&node, id).Error; err != nil {
+				response.NotFound(c, "node not found")
+				return
+			}
+			
+			database.Model(&node).Update("status", "active")
+			
+			// Audit log
+			database.Create(&AuditLog{
+				UserID:     username.(string),
+				UserName:   username.(string),
+				Plane:      "admin",
+				Action:     "governance.federation.activate",
+				Resource:   "federation_node",
+				ResourceID: id,
+				Detail:     fmt.Sprintf("activated federation node: %s", node.NodeName),
+				Domain:     "OAS",
+			})
+			
+			response.OK(c, gin.H{"message": "node activated"})
+		})
+		
+		admin.DELETE("/federation-nodes/:id", func(c *gin.Context) {
+			username, _ := c.Get("username")
+			if !isInAdminWhitelistB(username.(string)) {
+				response.Forbidden(c, "access denied")
+				c.Abort()
+				return
+			}
+			
+			id := c.Param("id")
+			var node FederationNode
+			if err := database.First(&node, id).Error; err != nil {
+				response.NotFound(c, "node not found")
+				return
+			}
+			
+			database.Delete(&node)
+			
+			// Audit log
+			database.Create(&AuditLog{
+				UserID:     username.(string),
+				UserName:   username.(string),
+				Plane:      "admin",
+				Action:     "governance.federation.delete",
+				Resource:   "federation_node",
+				ResourceID: id,
+				Detail:     fmt.Sprintf("deleted federation node: %s", node.NodeName),
+				Domain:     "OAS",
+			})
+			
+			response.OK(c, gin.H{"message": "node deleted"})
 		})
 
 		// 审计日志路由组 — 白名单 A + XAM 角色放行，handler 内再做细粒度检查
@@ -4790,6 +5038,215 @@ function deleteKey(id) {
 }
 
 loadKeys();
+</script>
+</body>
+</html>`
+}
+
+func federationNodesPageHTML(username string) string {
+	return `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>联邦节点管理 - OAS Console</title>
+<style>
+body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; margin: 0; padding: 20px; background: #f5f5f5; }
+.container { max-width: 1200px; margin: 0 auto; }
+h1 { color: #333; margin-bottom: 20px; }
+.card { background: white; border-radius: 8px; padding: 20px; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+table { width: 100%; border-collapse: collapse; }
+th, td { padding: 12px; text-align: left; border-bottom: 1px solid #eee; }
+th { background: #f9f9f9; font-weight: 600; }
+.btn { padding: 6px 12px; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; margin-right: 5px; }
+.btn-primary { background: #007bff; color: white; }
+.btn-danger { background: #dc3545; color: white; }
+.btn-success { background: #28a745; color: white; }
+.btn-warning { background: #ffc107; color: #333; }
+.btn:hover { opacity: 0.9; }
+.status-active { color: #28a745; font-weight: 600; }
+.status-suspended { color: #ffc107; font-weight: 600; }
+.status-inactive { color: #6c757d; font-weight: 600; }
+.trust-basic { color: #6c757d; }
+.trust-standard { color: #007bff; }
+.trust-full { color: #28a745; font-weight: 600; }
+</style>
+</head>
+<body>
+<div class="container">
+<h1>联邦节点管理</h1>
+<div class="card">
+<button class="btn btn-primary" onclick="showCreateDialog()">注册联邦节点</button>
+</div>
+<div class="card">
+<table id="nodesTable">
+<thead>
+<tr>
+  <th>ID</th>
+  <th>节点名称</th>
+  <th>节点ID</th>
+  <th>信任级别</th>
+  <th>状态</th>
+  <th>端点</th>
+  <th>创建者</th>
+  <th>操作</th>
+</tr>
+</thead>
+<tbody id="nodesBody"></tbody>
+</table>
+</div>
+</div>
+
+<script>
+const token = new URLSearchParams(window.location.search).get('token');
+
+async function loadNodes() {
+  try {
+    const res = await fetch('/api/v1/admin/federation-nodes', {
+      headers: { 'Authorization': 'Bearer ' + token }
+    });
+    if (!res.ok) throw new Error('加载失败');
+    const data = await res.json();
+    const tbody = document.getElementById('nodesBody');
+    tbody.innerHTML = '';
+    data.forEach(function(node) {
+      const row = document.createElement('tr');
+      row.innerHTML = 
+        '<td>' + node.id + '</td>' +
+        '<td>' + node.node_name + '</td>' +
+        '<td>' + node.node_id + '</td>' +
+        '<td class="trust-' + node.trust_level + '">' + node.trust_level + '</td>' +
+        '<td class="status-' + node.status + '">' + node.status + '</td>' +
+        '<td>' + (node.endpoint || '-') + '</td>' +
+        '<td>' + node.created_by + '</td>' +
+        '<td>' +
+          '<button class="btn btn-primary" onclick="editNode(' + node.id + ')">编辑</button>' +
+          (node.status === 'active' 
+            ? '<button class="btn btn-warning" onclick="suspendNode(' + node.id + ')">暂停</button>'
+            : '<button class="btn btn-success" onclick="activateNode(' + node.id + ')">激活</button>') +
+          '<button class="btn btn-danger" onclick="deleteNode(' + node.id + ')">删除</button>' +
+        '</td>';
+      tbody.appendChild(row);
+    });
+  } catch (err) {
+    alert('加载失败: ' + err.message);
+  }
+}
+
+function showCreateDialog() {
+  const nodeName = prompt('节点名称:');
+  if (!nodeName) return;
+  const nodeId = prompt('节点ID (唯一标识):');
+  if (!nodeId) return;
+  const trustLevel = prompt('信任级别 (basic/standard/full):');
+  if (trustLevel !== 'basic' && trustLevel !== 'standard' && trustLevel !== 'full') {
+    alert('信任级别必须是 basic、standard 或 full');
+    return;
+  }
+  const publicKey = prompt('公钥 (PEM 格式):');
+  const endpoint = prompt('端点 URL:');
+  const capabilities = prompt('能力描述:');
+  
+  fetch('/api/v1/admin/federation-nodes', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': 'Bearer ' + token
+    },
+    body: JSON.stringify({
+      node_name: nodeName,
+      node_id: nodeId,
+      trust_level: trustLevel,
+      public_key: publicKey,
+      endpoint: endpoint,
+      capabilities: capabilities
+    })
+  }).then(function(res) {
+    if (!res.ok) throw new Error('创建失败');
+    alert('注册成功');
+    loadNodes();
+  }).catch(function(err) {
+    alert('创建失败: ' + err.message);
+  });
+}
+
+function editNode(id) {
+  const nodeName = prompt('节点名称:');
+  if (!nodeName) return;
+  const trustLevel = prompt('信任级别 (basic/standard/full):');
+  if (trustLevel && trustLevel !== 'basic' && trustLevel !== 'standard' && trustLevel !== 'full') {
+    alert('信任级别必须是 basic、standard 或 full');
+    return;
+  }
+  const publicKey = prompt('公钥 (PEM 格式):');
+  const endpoint = prompt('端点 URL:');
+  const capabilities = prompt('能力描述:');
+  
+  fetch('/api/v1/admin/federation-nodes/' + id, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': 'Bearer ' + token
+    },
+    body: JSON.stringify({
+      node_name: nodeName,
+      trust_level: trustLevel,
+      public_key: publicKey,
+      endpoint: endpoint,
+      capabilities: capabilities
+    })
+  }).then(function(res) {
+    if (!res.ok) throw new Error('更新失败');
+    alert('更新成功');
+    loadNodes();
+  }).catch(function(err) {
+    alert('更新失败: ' + err.message);
+  });
+}
+
+function suspendNode(id) {
+  if (!confirm('确认暂停此节点？')) return;
+  
+  fetch('/api/v1/admin/federation-nodes/' + id + '/suspend', {
+    method: 'PUT',
+    headers: { 'Authorization': 'Bearer ' + token }
+  }).then(function(res) {
+    if (!res.ok) throw new Error('暂停失败');
+    alert('暂停成功');
+    loadNodes();
+  }).catch(function(err) {
+    alert('暂停失败: ' + err.message);
+  });
+}
+
+function activateNode(id) {
+  fetch('/api/v1/admin/federation-nodes/' + id + '/activate', {
+    method: 'PUT',
+    headers: { 'Authorization': 'Bearer ' + token }
+  }).then(function(res) {
+    if (!res.ok) throw new Error('激活失败');
+    alert('激活成功');
+    loadNodes();
+  }).catch(function(err) {
+    alert('激活失败: ' + err.message);
+  });
+}
+
+function deleteNode(id) {
+  if (!confirm('确认删除此节点？此操作不可恢复。')) return;
+  
+  fetch('/api/v1/admin/federation-nodes/' + id, {
+    method: 'DELETE',
+    headers: { 'Authorization': 'Bearer ' + token }
+  }).then(function(res) {
+    if (!res.ok) throw new Error('删除失败');
+    alert('删除成功');
+    loadNodes();
+  }).catch(function(err) {
+    alert('删除失败: ' + err.message);
+  });
+}
+
+loadNodes();
 </script>
 </body>
 </html>`
