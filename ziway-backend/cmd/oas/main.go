@@ -164,8 +164,8 @@ type ApprovalRequest struct {
 	Description string      `gorm:"type:text" json:"description"`
 	Type        string      `gorm:"size:50;not null;index" json:"type"` // high_privilege/org_delete/key_operation/federation
 	Status      string      `gorm:"size:20;not null;default:pending;index" json:"status"` // pending/approved/rejected/executed
-	RequesterID uint64      `gorm:"not null;index" json:"requester_id"`
-	ApproverID  *uint64     `json:"approver_id"`
+	RequesterID string      `gorm:"size:64;not null;index" json:"requester_id"` // 业务编码（如 XHPZ#OU-ADMIN）
+	ApproverID  *string     `gorm:"size:64" json:"approver_id"` // 业务编码
 	CreatedAt   time.Time   `json:"created_at"`
 	UpdatedAt   time.Time   `json:"updated_at"`
 	ApprovedAt  *time.Time  `json:"approved_at"`
@@ -807,7 +807,7 @@ func main() {
 			
 			// 类型断言
 			usernameStr, _ := username.(string)
-			userIDUint, _ := userID.(uint64)
+			userIDStr, _ := userID.(string)
 			domainStr, _ := domain.(string)
 			oasEnvStr, _ := oasEnv.(string)
 			
@@ -844,7 +844,7 @@ func main() {
 				Description: req.Description,
 				Type:        req.Type,
 				Status:      "pending",
-				RequesterID: userIDUint,
+				RequesterID: userIDStr,
 				Domain:      domainStr,
 				Environment: oasEnvStr,
 			}
@@ -880,7 +880,7 @@ func main() {
 			
 			// 类型断言
 			usernameStr, _ := username.(string)
-			userIDUint, _ := userID.(uint64)
+			userIDStr, _ := userID.(string)
 			domainStr, _ := domain.(string)
 			oasEnvStr, _ := oasEnv.(string)
 			
@@ -904,7 +904,7 @@ func main() {
 			
 			now := time.Now()
 			approval.Status = "approved"
-			approval.ApproverID = ptrUint64(userIDUint)
+			approval.ApproverID = ptrString(userIDStr)
 			approval.ApprovedAt = &now
 			
 			if err := database.Save(&approval).Error; err != nil {
@@ -938,7 +938,7 @@ func main() {
 			
 			// 类型断言
 			usernameStr, _ := username.(string)
-			userIDUint, _ := userID.(uint64)
+			userIDStr, _ := userID.(string)
 			domainStr, _ := domain.(string)
 			oasEnvStr, _ := oasEnv.(string)
 			
@@ -966,7 +966,7 @@ func main() {
 			c.ShouldBindJSON(&req)
 			
 			approval.Status = "rejected"
-			approval.ApproverID = ptrUint64(userIDUint)
+			approval.ApproverID = ptrString(userIDStr)
 			approval.Notes = req.Notes
 			
 			if err := database.Save(&approval).Error; err != nil {
@@ -2294,6 +2294,10 @@ func parseUint(s string) (uint64, error) {
 
 func ptrUint64(n uint64) *uint64 {
 	return &n
+}
+
+func ptrString(s string) *string {
+	return &s
 }
 
 // regeneratePolicyCSV reads all active RBACPolicy from DB and writes the Casbin-compatible CSV.
