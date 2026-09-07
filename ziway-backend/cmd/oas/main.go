@@ -863,6 +863,76 @@ func main() {
 		c.String(200, loginPageHTML(redirect, edition, devTokenEnabled))
 	})
 
+	// ===== GET /admin — OAS Console 管理控制台首页 =====
+	// Requires JWT + whitelist A (OU/AU/OAM)
+	r.GET("/admin", func(c *gin.Context) {
+		if jwtVerifier == nil {
+			response.InternalError(c, "JWT verifier not configured")
+			return
+		}
+		// Manual JWT check for HTML page (redirect to login if not authenticated)
+		tokenStr := c.Query("token")
+		if tokenStr == "" {
+			// Try to get from Authorization header
+			auth := c.GetHeader("Authorization")
+			if len(auth) > 7 && auth[:7] == "Bearer " {
+				tokenStr = auth[7:]
+			}
+		}
+		if tokenStr == "" {
+			c.Redirect(302, "/login?redirect=/admin")
+			return
+		}
+		// Verify JWT
+		claims, err := jwtVerifier.Verify(tokenStr)
+		if err != nil {
+			c.Redirect(302, "/login?redirect=/admin")
+			return
+		}
+		// Check whitelist A
+		username := claims.Username
+		if !isInAdminWhitelistA(username) {
+			c.Header("Content-Type", "text/html; charset=utf-8")
+			c.String(403, "<h1>403 Forbidden</h1><p>Access restricted to system administrators.</p>")
+			return
+		}
+		c.Header("Content-Type", "text/html; charset=utf-8")
+		c.String(200, consoleHomePageHTML(username, oasEnv.String()))
+	})
+
+	// ===== GET /admin/audit-logs — 审计日志页面（白名单 B：仅 2 admin）=====
+	r.GET("/admin/audit-logs", func(c *gin.Context) {
+		if jwtVerifier == nil {
+			response.InternalError(c, "JWT verifier not configured")
+			return
+		}
+		tokenStr := c.Query("token")
+		if tokenStr == "" {
+			auth := c.GetHeader("Authorization")
+			if len(auth) > 7 && auth[:7] == "Bearer " {
+				tokenStr = auth[7:]
+			}
+		}
+		if tokenStr == "" {
+			c.Redirect(302, "/login?redirect=/admin/audit-logs")
+			return
+		}
+		claims, err := jwtVerifier.Verify(tokenStr)
+		if err != nil {
+			c.Redirect(302, "/login?redirect=/admin/audit-logs")
+			return
+		}
+		// Whitelist B: only OU/AU admin can access audit logs
+		username := claims.Username
+		if !isInAdminWhitelistB(username) {
+			c.Header("Content-Type", "text/html; charset=utf-8")
+			c.String(403, "<h1>403 Forbidden</h1><p>Audit logs restricted to OU/AU admin.</p>")
+			return
+		}
+		c.Header("Content-Type", "text/html; charset=utf-8")
+		c.String(200, auditLogsPageHTML())
+	})
+
 	// ===== POST /api/v1/auth/login — username+password login =====
 	api.POST("/auth/login", func(c *gin.Context) {
 		if jwtIssuer == nil {
@@ -1343,6 +1413,11 @@ func isInAdminWhitelistB(username string) bool {
 	return canOperateAdminAccount(username)
 }
 
+// isInAdminWhitelistA checks if the user is in Whitelist A (system management access).
+func isInAdminWhitelistA(username string) bool {
+	return username == "oas-ou-admin" || username == "oas-au-admin" || username == "oas-oam-admin"
+}
+
 // seedTestUser creates a test user with bcrypt-hashed password if no users exist.
 // seedTestUsers creates test accounts based on product edition.
 // Beta edition: multiple test accounts with different roles (SU/AU/CU/GU)
@@ -1760,6 +1835,249 @@ async function toggleStatus(id,status){
 	loadUsers();
 }
 loadUsers();
+</script>
+</body>
+</html>`
+}
+
+// consoleHomePageHTML returns the OAS Console home page HTML with navigation.
+func consoleHomePageHTML(username, oasEnv string) string {
+	return `<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>OAS Console</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:#f3f4f6;color:#111827}
+.header{background:#fff;border-bottom:1px solid #e5e7eb;padding:16px 24px;display:flex;align-items:center;justify-content:space-between}
+.header h1{font-size:18px;font-weight:600}
+.user-info{font-size:13px;color:#6b7280}
+.container{max-width:1200px;margin:24px auto;padding:0 24px}
+.env-badge{display:inline-block;padding:4px 12px;border-radius:9999px;font-size:12px;font-weight:600;margin-left:12px}
+.env-DEV{background:#dbeafe;color:#1e40af}
+.env-BETA{background:#fef3c7;color:#92400e}
+.env-RC{background:#e0e7ff;color:#3730a3}
+.env-PROD{background:#fee2e2;color:#991b1b}
+.nav-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:20px;margin-top:24px}
+.nav-card{background:#fff;border-radius:12px;box-shadow:0 1px 3px rgba(0,0,0,.1);padding:24px;text-decoration:none;color:#111827;transition:all .2s}
+.nav-card:hover{box-shadow:0 4px 12px rgba(0,0,0,.15);transform:translateY(-2px)}
+.nav-card h3{font-size:16px;font-weight:600;margin-bottom:8px;display:flex;align-items:center;gap:8px}
+.nav-card p{font-size:13px;color:#6b7280;line-height:1.5}
+.nav-icon{width:32px;height:32px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:18px}
+.icon-users{background:#dbeafe;color:#2563eb}
+.icon-roles{background:#e0e7ff;color:#4f46e5}
+.icon-org{background:#d1fae5;color:#059669}
+.icon-audit{background:#fee2e2;color:#dc2626}
+.icon-config{background:#f3f4f6;color:#6b7280}
+.icon-domains{background:#fef3c7;color:#d97706}
+.section-title{font-size:14px;font-weight:600;color:#6b7280;text-transform:uppercase;margin-top:32px;margin-bottom:16px;padding-bottom:8px;border-bottom:2px solid #e5e7eb}
+</style>
+</head>
+<body>
+<div class="header">
+	<h1>知味 OAS Console <span class="env-badge env-` + oasEnv + `">` + oasEnv + `</span></h1>
+	<div class="user-info">` + username + ` | <a href="/login" style="color:#2563eb;text-decoration:none">退出</a></div>
+</div>
+<div class="container">
+	<div class="section-title">系统管理（L1）</div>
+	<div class="nav-grid">
+		<a href="/admin/users" class="nav-card">
+			<h3><span class="nav-icon icon-users">👥</span>账号管理</h3>
+			<p>全局用户列表、新增用户、角色分配、状态管理</p>
+		</a>
+		<a href="/admin/roles" class="nav-card">
+			<h3><span class="nav-icon icon-roles">🔐</span>角色权限</h3>
+			<p>角色定义、权限点编码（域:操作）、RBAC 策略</p>
+		</a>
+		<a href="/admin/orgs" class="nav-card">
+			<h3><span class="nav-icon icon-org">🏢</span>组织管理</h3>
+			<p>组织树、成员归属、域间协调</p>
+		</a>
+		<a href="/admin/audit-logs" class="nav-card">
+			<h3><span class="nav-icon icon-audit">📋</span>审计日志</h3>
+			<p>全量操作审计、按用户/时间/操作类型检索（仅 2 admin 可读）</p>
+		</a>
+		<a href="/admin/configs" class="nav-card">
+			<h3><span class="nav-icon icon-config">⚙️</span>系统配置</h3>
+			<p>系统参数、环境配置、功能开关</p>
+		</a>
+		<a href="/admin/services" class="nav-card">
+			<h3><span class="nav-icon icon-config">🔌</span>服务注册</h3>
+			<p>MBS/BOS/OAS 服务注册、健康检查、API 密钥</p>
+		</a>
+	</div>
+
+	<div class="section-title">域管理（L2 · XAM）</div>
+	<div class="nav-grid">
+		<a href="/admin/domains/TAM" class="nav-card">
+			<h3><span class="nav-icon icon-domains">💻</span>TAM 技术域</h3>
+			<p>技术域账号、组织、审计（域级管理视图）</p>
+		</a>
+		<a href="/admin/domains/HAM" class="nav-card">
+			<h3><span class="nav-icon icon-domains">👔</span>HAM 人资云</h3>
+			<p>人资域账号、组织、审计（域级管理视图）</p>
+		</a>
+		<a href="/admin/domains/YAM" class="nav-card">
+			<h3><span class="nav-icon icon-domains">🎯</span>YAM 智场域</h3>
+			<p>智场域账号、组织、审计（域级管理视图）</p>
+		</a>
+	</div>
+
+	<div class="section-title">治理看板（L0 · 只读）</div>
+	<div class="nav-grid">
+		<a href="/governance" class="nav-card">
+			<h3><span class="nav-icon icon-config">📊</span>治理总览</h3>
+			<p>战略审批、所有权视图、业务系统跳转（O*M 只读）</p>
+		</a>
+	</div>
+</div>
+</body>
+</html>`
+}
+
+// auditLogsPageHTML returns the audit logs page HTML (whitelist B: only 2 admins).
+func auditLogsPageHTML() string {
+	return `<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>OAS Audit Logs</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:#f3f4f6;color:#111827}
+.header{background:#fff;border-bottom:1px solid #e5e7eb;padding:16px 24px;display:flex;align-items:center;justify-content:space-between}
+.header h1{font-size:18px;font-weight:600}
+.container{max-width:1200px;margin:24px auto;padding:0 24px}
+.card{background:#fff;border-radius:10px;box-shadow:0 1px 2px rgba(0,0,0,.06);padding:24px;margin-bottom:20px}
+.card h2{font-size:16px;font-weight:600;margin-bottom:16px}
+.filters{display:flex;gap:12px;margin-bottom:16px;flex-wrap:wrap}
+.filters input,.filters select{padding:8px 12px;border:1px solid #d1d5db;border-radius:6px;font-size:13px}
+.filters button{padding:8px 16px;border:none;border-radius:6px;background:#2563eb;color:#fff;cursor:pointer;font-size:13px}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{text-align:left;padding:10px 12px;border-bottom:2px solid #e5e7eb;font-weight:600;color:#6b7280;font-size:12px;text-transform:uppercase}
+td{padding:10px 12px;border-bottom:1px solid #f3f4f6;vertical-align:top}
+.badge{display:inline-block;padding:2px 8px;border-radius:9999px;font-size:11px;font-weight:500}
+.badge-admin{background:#e0e7ff;color:#3730a3}
+.badge-owner{background:#fef3c7;color:#92400e}
+.pagination{display:flex;gap:8px;justify-content:center;margin-top:16px}
+.pagination button{padding:6px 12px;border:1px solid #d1d5db;border-radius:6px;background:#fff;cursor:pointer;font-size:12px}
+.pagination button:disabled{opacity:.5;cursor:not-allowed}
+.pagination button.active{background:#2563eb;color:#fff;border-color:#2563eb}
+.empty{text-align:center;padding:40px;color:#9ca3af;font-size:14px}
+.detail{font-size:12px;color:#6b7280;max-width:300px;word-break:break-all}
+</style>
+</head>
+<body>
+<div class="header">
+	<h1>📋 审计日志</h1>
+	<a href="/admin" style="font-size:13px;color:#6b7280;text-decoration:none">← 返回 Console</a>
+</div>
+<div class="container">
+	<div class="card">
+		<div class="filters">
+			<input type="text" id="filterUser" placeholder="用户 ID">
+			<select id="filterPlane">
+				<option value="">全部平面</option>
+				<option value="admin">Admin</option>
+				<option value="owner">Owner</option>
+			</select>
+			<select id="filterAction">
+				<option value="">全部操作</option>
+				<option value="auth.login">登录</option>
+				<option value="auth.quick-login">快速登录</option>
+				<option value="auth.dev-token">开发令牌</option>
+				<option value="user.create">创建用户</option>
+				<option value="user.update_roles">修改角色</option>
+				<option value="user.update_status">修改状态</option>
+			</select>
+			<button onclick="loadLogs()">筛选</button>
+		</div>
+		<table>
+			<thead>
+				<tr>
+					<th>时间</th>
+					<th>用户</th>
+					<th>平面</th>
+					<th>操作</th>
+					<th>资源</th>
+					<th>详情</th>
+					<th>环境</th>
+					<th>IP</th>
+				</tr>
+			</thead>
+			<tbody id="logTable">
+				<tr><td colspan="8" class="empty">加载中...</td></tr>
+			</tbody>
+		</table>
+		<div class="pagination" id="pagination"></div>
+	</div>
+</div>
+<script>
+const API='/api/v1';
+let currentPage=1;
+let pageSize=20;
+let totalLogs=0;
+
+async function loadLogs(){
+	const user=document.getElementById('filterUser').value;
+	const plane=document.getElementById('filterPlane').value;
+	const action=document.getElementById('filterAction').value;
+	let url=API+'/admin/audit-logs?page='+currentPage+'&size='+pageSize;
+	if(user)url+='&user_id='+encodeURIComponent(user);
+	if(plane)url+='&plane='+encodeURIComponent(plane);
+	if(action)url+='&action='+encodeURIComponent(action);
+	const r=await fetch(url);
+	const d=await r.json();
+	if(d.code!==200){alert(d.message||'load failed');return}
+	totalLogs=d.data.total;
+	renderLogs(d.data.items);
+	renderPagination();
+}
+
+function renderLogs(items){
+	if(!items||items.length===0){
+		document.getElementById('logTable').innerHTML='<tr><td colspan="8" class="empty">暂无数据</td></tr>';
+		return;
+	}
+	let html='';
+	for(const log of items){
+		const time=new Date(log.created_at).toLocaleString('zh-CN');
+		const planeBadge=log.plane==='admin'?'<span class="badge badge-admin">Admin</span>':'<span class="badge badge-owner">Owner</span>';
+		html+='<tr>';
+		html+='<td>'+time+'</td>';
+		html+='<td>'+log.user_name+'<br><small style="color:#9ca3af">'+log.user_id+'</small></td>';
+		html+='<td>'+planeBadge+'</td>';
+		html+='<td><code style="font-size:11px;background:#f3f4f6;padding:2px 6px;border-radius:4px">'+log.action+'</code></td>';
+		html+='<td>'+log.resource+'</td>';
+		html+='<td class="detail">'+log.detail+'</td>';
+		html+='<td><span class="badge" style="background:#dbeafe;color:#1e40af">'+(log.environment||'DEV')+'</span></td>';
+		html+='<td>'+log.ip+'</td>';
+		html+='</tr>';
+	}
+	document.getElementById('logTable').innerHTML=html;
+}
+
+function renderPagination(){
+	const totalPages=Math.ceil(totalLogs/pageSize);
+	if(totalPages<=1){document.getElementById('pagination').innerHTML='';return}
+	let html='<button onclick="changePage('+(currentPage-1)+')" '+(currentPage===1?'disabled':'')+'>上一页</button>';
+	for(let i=1;i<=totalPages&&i<=5;i++){
+		html+='<button onclick="changePage('+i+')" class="'+(i===currentPage?'active':'')+'">'+i+'</button>';
+	}
+	if(totalPages>5)html+='<span style="padding:6px">...</span>';
+	html+='<button onclick="changePage('+(currentPage+1)+')" '+(currentPage===totalPages?'disabled':'')+'>下一页</button>';
+	document.getElementById('pagination').innerHTML=html;
+}
+
+function changePage(page){
+	currentPage=page;
+	loadLogs();
+}
+
+loadLogs();
 </script>
 </body>
 </html>`
