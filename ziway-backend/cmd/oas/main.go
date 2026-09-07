@@ -1538,19 +1538,282 @@ func main() {
 		})
 
 		// API密钥
+		// API Key 全生命周期管理 — 白名单 B (OU/AU)
 		admin.GET("/api-keys", func(c *gin.Context) {
+			username, _ := c.Get("username")
+			if !isInAdminWhitelistB(username.(string)) {
+				response.Forbidden(c, "access denied")
+				c.Abort()
+				return
+			}
 			var items []APIKey
 			database.Order("created_at DESC").Find(&items)
 			response.OK(c, items)
 		})
-		admin.POST("/api-keys", func(c *gin.Context) {
+		
+		admin.GET("/api-keys/:id", func(c *gin.Context) {
+			username, _ := c.Get("username")
+			if !isInAdminWhitelistB(username.(string)) {
+				response.Forbidden(c, "access denied")
+				c.Abort()
+				return
+			}
+			id := c.Param("id")
 			var k APIKey
-			if err := c.ShouldBindJSON(&k); err != nil {
+			if err := database.First(&k, id).Error; err != nil {
+				response.NotFound(c, "key not found")
+				return
+			}
+			response.OK(c, k)
+		})
+		
+		admin.POST("/api-keys", func(c *gin.Context) {
+			username, _ := c.Get("username")
+			if !isInAdminWhitelistB(username.(string)) {
+				response.Forbidden(c, "access denied")
+				c.Abort()
+				return
+			}
+			
+			var req struct {
+				KeyName   string     `json:"key_name"`
+				Scopes    string     `json:"scopes"`
+				ExpiresAt *time.Time `json:"expires_at"`
+			}
+			if err := c.ShouldBindJSON(&req); err != nil {
 				response.BadRequest(c, "invalid request")
 				return
 			}
+			
+			// Generate API key: prefix + random part
+			prefix := "oas_" + fmt.Sprintf("%d", time.Now().UnixNano()%10000)
+			randomPart := fmt.Sprintf("%x", time.Now().UnixNano()) + fmt.Sprintf("%x", big.NewInt(time.Now().UnixNano()).Int64())
+			fullKey := prefix + "_" + randomPart[:32]
+			
+			// Hash the key
+			hash, err := bcrypt.GenerateFromPassword([]byte(fullKey), bcrypt.DefaultCost)
+			if err != nil {
+				response.InternalError(c, "failed to hash key")
+				return
+			}
+			
+			k := APIKey{
+				KeyName:   req.KeyName,
+				KeyPrefix: prefix,
+				KeyHash:   string(hash),
+				Scopes:    req.Scopes,
+				ExpiresAt: req.ExpiresAt,
+				Status:    "active",
+				CreatedBy: username.(string),
+			}
 			database.Create(&k)
-			response.Created(c, k)
+			
+			// Audit log
+			database.Create(&AuditLog{
+				UserID:     username.(string),
+				UserName:   username.(string),
+				Plane:      "admin",
+				Action:     "governance.apikey.create",
+				Resource:   "apikey",
+				ResourceID: fmt.Sprintf("%d", k.ID),
+				Detail:     fmt.Sprintf("created api key: %s", req.KeyName),
+				Domain:     "OAS",
+			})
+			
+			// Return full key only once
+			response.Created(c, gin.H{
+				"id":         k.ID,
+				"key_name":   k.KeyName,
+				"key_prefix": k.KeyPrefix,
+				"full_key":   fullKey,
+				"scopes":     k.Scopes,
+				"expires_at": k.ExpiresAt,
+				"status":     k.Status,
+				"message":    "Save this key now. You won't be able to see it again.",
+			})
+		})
+		
+		admin.PUT("/api-keys/:id/rotate", func(c *gin.Context) {
+			username, _ := c.Get("username")
+			if !isInAdminWhitelistB(username.(string)) {
+				response.Forbidden(c, "access denied")
+				c.Abort()
+				return
+			}
+			
+			id := c.Param("id")
+			var oldKey APIKey
+			if err := database.First(&oldKey, id).Error; err != nil {
+				response.NotFound(c, "key not found")
+				return
+			}
+			
+			if oldKey.Status != "active" {
+				response.BadRequest(c, "can only rotate active keys")
+				return
+			}
+			
+			// Generate new key
+			prefix := "oas_" + fmt.Sprintf("%d", time.Now().UnixNano()%10000)
+			randomPart := fmt.Sprintf("%x", time.Now().UnixNano()) + fmt.Sprintf("%x", big.NewInt(time.Now().UnixNano()).Int64())
+			fullKey := prefix + "_" + randomPart[:32]
+			
+			hash, err := bcrypt.GenerateFromPassword([]byte(fullKey), bcrypt.DefaultCost)
+			if err != nil {
+				response.InternalError(c, "failed to hash key")
+				return
+			}
+			
+			// Atomic rotation: disable old key + create new key
+			newKey := APIKey{
+				KeyName:   oldKey.KeyName + " (rotated)",
+				KeyPrefix: prefix,
+				KeyHash:   string(hash),
+				Scopes:    oldKey.Scopes,
+				ExpiresAt: oldKey.ExpiresAt,
+				Status:    "active",
+				CreatedBy: username.(string),
+			}
+			
+			// Transaction for atomicity
+			tx := database.Begin()
+			if err := tx.Model(&APIKey{}).Where("id = ?", oldKey.ID).Update("status", "disabled").Error; err != nil {
+				tx.Rollback()
+				response.InternalError(c, "failed to disable old key")
+				return
+			}
+			if err := tx.Create(&newKey).Error; err != nil {
+				tx.Rollback()
+				response.InternalError(c, "failed to create new key")
+				return
+			}
+			tx.Commit()
+			
+			// Audit log
+			database.Create(&AuditLog{
+				UserID:     username.(string),
+				UserName:   username.(string),
+				Plane:      "admin",
+				Action:     "governance.apikey.rotate",
+				Resource:   "apikey",
+				ResourceID: fmt.Sprintf("%d", newKey.ID),
+				Detail:     fmt.Sprintf("rotated api key from id=%d to id=%d", oldKey.ID, newKey.ID),
+				Domain:     "OAS",
+			})
+			
+			response.OK(c, gin.H{
+				"id":         newKey.ID,
+				"key_name":   newKey.KeyName,
+				"key_prefix": newKey.KeyPrefix,
+				"full_key":   fullKey,
+				"scopes":     newKey.Scopes,
+				"expires_at": newKey.ExpiresAt,
+				"status":     newKey.Status,
+				"old_key_id": oldKey.ID,
+				"message":    "Key rotated. Old key disabled. Save new key now.",
+			})
+		})
+		
+		admin.PUT("/api-keys/:id/disable", func(c *gin.Context) {
+			username, _ := c.Get("username")
+			if !isInAdminWhitelistB(username.(string)) {
+				response.Forbidden(c, "access denied")
+				c.Abort()
+				return
+			}
+			
+			id := c.Param("id")
+			var k APIKey
+			if err := database.First(&k, id).Error; err != nil {
+				response.NotFound(c, "key not found")
+				return
+			}
+			
+			database.Model(&k).Update("status", "disabled")
+			
+			// Audit log
+			database.Create(&AuditLog{
+				UserID:     username.(string),
+				UserName:   username.(string),
+				Plane:      "admin",
+				Action:     "governance.apikey.disable",
+				Resource:   "apikey",
+				ResourceID: id,
+				Detail:     fmt.Sprintf("disabled api key: %s", k.KeyName),
+				Domain:     "OAS",
+			})
+			
+			response.OK(c, gin.H{"message": "key disabled"})
+		})
+		
+		admin.PUT("/api-keys/:id/enable", func(c *gin.Context) {
+			username, _ := c.Get("username")
+			if !isInAdminWhitelistB(username.(string)) {
+				response.Forbidden(c, "access denied")
+				c.Abort()
+				return
+			}
+			
+			id := c.Param("id")
+			var k APIKey
+			if err := database.First(&k, id).Error; err != nil {
+				response.NotFound(c, "key not found")
+				return
+			}
+			
+			// Check expiry
+			if k.ExpiresAt != nil && k.ExpiresAt.Before(time.Now()) {
+				response.BadRequest(c, "cannot enable expired key")
+				return
+			}
+			
+			database.Model(&k).Update("status", "active")
+			
+			// Audit log
+			database.Create(&AuditLog{
+				UserID:     username.(string),
+				UserName:   username.(string),
+				Plane:      "admin",
+				Action:     "governance.apikey.enable",
+				Resource:   "apikey",
+				ResourceID: id,
+				Detail:     fmt.Sprintf("enabled api key: %s", k.KeyName),
+				Domain:     "OAS",
+			})
+			
+			response.OK(c, gin.H{"message": "key enabled"})
+		})
+		
+		admin.DELETE("/api-keys/:id", func(c *gin.Context) {
+			username, _ := c.Get("username")
+			if !isInAdminWhitelistB(username.(string)) {
+				response.Forbidden(c, "access denied")
+				c.Abort()
+				return
+			}
+			
+			id := c.Param("id")
+			var k APIKey
+			if err := database.First(&k, id).Error; err != nil {
+				response.NotFound(c, "key not found")
+				return
+			}
+			
+			database.Delete(&k)
+			
+			// Audit log
+			database.Create(&AuditLog{
+				UserID:     username.(string),
+				UserName:   username.(string),
+				Plane:      "admin",
+				Action:     "governance.apikey.delete",
+				Resource:   "apikey",
+				ResourceID: id,
+				Detail:     fmt.Sprintf("deleted api key: %s", k.KeyName),
+				Domain:     "OAS",
+			})
+			
+			response.OK(c, gin.H{"message": "key deleted"})
 		})
 
 		// 审计日志路由组 — 白名单 A + XAM 角色放行，handler 内再做细粒度检查
@@ -4348,6 +4611,185 @@ async function loadConfig() {
 }
 
 loadConfig();
+</script>
+</body>
+</html>`
+}
+
+func apiKeysPageHTML(username string) string {
+	return `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>API Key 管理 - OAS Console</title>
+<style>
+body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; margin: 0; padding: 20px; background: #f5f5f5; }
+.container { max-width: 1200px; margin: 0 auto; }
+h1 { color: #333; margin-bottom: 20px; }
+.card { background: white; border-radius: 8px; padding: 20px; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+table { width: 100%; border-collapse: collapse; }
+th, td { padding: 12px; text-align: left; border-bottom: 1px solid #eee; }
+th { background: #f9f9f9; font-weight: 600; }
+.btn { padding: 6px 12px; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; margin-right: 5px; }
+.btn-primary { background: #007bff; color: white; }
+.btn-danger { background: #dc3545; color: white; }
+.btn-success { background: #28a745; color: white; }
+.btn-warning { background: #ffc107; color: #333; }
+.btn:hover { opacity: 0.9; }
+.status-active { color: #28a745; font-weight: 600; }
+.status-disabled { color: #dc3545; font-weight: 600; }
+.key-display { font-family: monospace; background: #f8f9fa; padding: 8px; border-radius: 4px; word-break: break-all; }
+</style>
+</head>
+<body>
+<div class="container">
+<h1>API Key 管理</h1>
+<div class="card">
+<button class="btn btn-primary" onclick="showCreateDialog()">创建 API Key</button>
+</div>
+<div class="card">
+<table id="keysTable">
+<thead>
+<tr>
+  <th>ID</th>
+  <th>名称</th>
+  <th>前缀</th>
+  <th>权限范围</th>
+  <th>过期时间</th>
+  <th>状态</th>
+  <th>创建者</th>
+  <th>操作</th>
+</tr>
+</thead>
+<tbody id="keysBody"></tbody>
+</table>
+</div>
+</div>
+
+<script>
+const token = new URLSearchParams(window.location.search).get('token');
+
+async function loadKeys() {
+  try {
+    const res = await fetch('/api/v1/admin/api-keys', {
+      headers: { 'Authorization': 'Bearer ' + token }
+    });
+    if (!res.ok) throw new Error('加载失败');
+    const data = await res.json();
+    const tbody = document.getElementById('keysBody');
+    tbody.innerHTML = '';
+    data.forEach(function(key) {
+      const row = document.createElement('tr');
+      row.innerHTML = 
+        '<td>' + key.id + '</td>' +
+        '<td>' + key.key_name + '</td>' +
+        '<td class="key-display">' + key.key_prefix + '</td>' +
+        '<td>' + (key.scopes || '-') + '</td>' +
+        '<td>' + (key.expires_at ? new Date(key.expires_at).toLocaleString() : '永不过期') + '</td>' +
+        '<td class="status-' + key.status + '">' + key.status + '</td>' +
+        '<td>' + key.created_by + '</td>' +
+        '<td>' +
+          '<button class="btn btn-warning" onclick="rotateKey(' + key.id + ')">轮换</button>' +
+          (key.status === 'active' 
+            ? '<button class="btn btn-danger" onclick="disableKey(' + key.id + ')">禁用</button>'
+            : '<button class="btn btn-success" onclick="enableKey(' + key.id + ')">启用</button>') +
+          '<button class="btn btn-danger" onclick="deleteKey(' + key.id + ')">删除</button>' +
+        '</td>';
+      tbody.appendChild(row);
+    });
+  } catch (err) {
+    alert('加载失败: ' + err.message);
+  }
+}
+
+function showCreateDialog() {
+  const keyName = prompt('密钥名称:');
+  if (!keyName) return;
+  const scopes = prompt('权限范围 (如: read:all,write:domain1):');
+  const expiresAt = prompt('过期时间 (ISO 格式，留空表示永不过期):');
+  
+  const body = { key_name: keyName, scopes: scopes };
+  if (expiresAt) body.expires_at = expiresAt;
+  
+  fetch('/api/v1/admin/api-keys', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': 'Bearer ' + token
+    },
+    body: JSON.stringify(body)
+  }).then(function(res) {
+    if (!res.ok) throw new Error('创建失败');
+    return res.json();
+  }).then(function(data) {
+    alert('创建成功！请立即保存密钥（只显示一次）：\n\n' + data.full_key);
+    loadKeys();
+  }).catch(function(err) {
+    alert('创建失败: ' + err.message);
+  });
+}
+
+function rotateKey(id) {
+  if (!confirm('确认轮换此密钥？旧密钥将立即失效。')) return;
+  
+  fetch('/api/v1/admin/api-keys/' + id + '/rotate', {
+    method: 'PUT',
+    headers: { 'Authorization': 'Bearer ' + token }
+  }).then(function(res) {
+    if (!res.ok) throw new Error('轮换失败');
+    return res.json();
+  }).then(function(data) {
+    alert('轮换成功！新密钥（只显示一次）：\n\n' + data.full_key + '\n\n旧密钥 ID: ' + data.old_key_id + ' 已禁用。');
+    loadKeys();
+  }).catch(function(err) {
+    alert('轮换失败: ' + err.message);
+  });
+}
+
+function disableKey(id) {
+  if (!confirm('确认禁用此密钥？')) return;
+  
+  fetch('/api/v1/admin/api-keys/' + id + '/disable', {
+    method: 'PUT',
+    headers: { 'Authorization': 'Bearer ' + token }
+  }).then(function(res) {
+    if (!res.ok) throw new Error('禁用失败');
+    alert('禁用成功');
+    loadKeys();
+  }).catch(function(err) {
+    alert('禁用失败: ' + err.message);
+  });
+}
+
+function enableKey(id) {
+  fetch('/api/v1/admin/api-keys/' + id + '/enable', {
+    method: 'PUT',
+    headers: { 'Authorization': 'Bearer ' + token }
+  }).then(function(res) {
+    if (!res.ok) throw new Error('启用失败');
+    alert('启用成功');
+    loadKeys();
+  }).catch(function(err) {
+    alert('启用失败: ' + err.message);
+  });
+}
+
+function deleteKey(id) {
+  if (!confirm('确认删除此密钥？此操作不可恢复。')) return;
+  
+  fetch('/api/v1/admin/api-keys/' + id, {
+    method: 'DELETE',
+    headers: { 'Authorization': 'Bearer ' + token }
+  }).then(function(res) {
+    if (!res.ok) throw new Error('删除失败');
+    alert('删除成功');
+    loadKeys();
+  }).catch(function(err) {
+    alert('删除失败: ' + err.message);
+  });
+}
+
+loadKeys();
 </script>
 </body>
 </html>`
