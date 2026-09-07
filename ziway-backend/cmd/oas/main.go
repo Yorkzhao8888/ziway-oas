@@ -897,7 +897,7 @@ func main() {
 			return
 		}
 		c.Header("Content-Type", "text/html; charset=utf-8")
-		c.String(200, consoleHomePageHTML(username, oasEnv.String()))
+		c.String(200, consoleHomePageHTML(username, oasEnv.String(), tokenStr))
 	})
 
 	// ===== GET /admin/audit-logs — 审计日志页面（白名单 B：仅 2 admin）=====
@@ -1238,24 +1238,27 @@ func main() {
 			response.InternalError(c, "jwt verifier not configured")
 			return
 		}
-		authHeader := c.GetHeader("Authorization")
-		if authHeader == "" {
+		// Support both ?token= parameter and Authorization header
+		tokenStr := c.Query("token")
+		if tokenStr == "" {
+			authHeader := c.GetHeader("Authorization")
+			if len(authHeader) > 7 && authHeader[:7] == "Bearer " {
+				tokenStr = authHeader[7:]
+			}
+		}
+		if tokenStr == "" {
 			c.Redirect(302, "/login?redirect=/admin/users")
 			return
 		}
-		parts := strings.SplitN(authHeader, " ", 2)
-		if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
-			c.Redirect(302, "/login?redirect=/admin/users")
-			return
-		}
-		claims, err := jwtVerifier.Verify(parts[1])
+		claims, err := jwtVerifier.Verify(tokenStr)
 		if err != nil {
 			c.Redirect(302, "/login?redirect=/admin/users")
 			return
 		}
 		// 白名单 A：系统管理访问 = OU-admin + AU-admin + OAM
 		if claims.Username != "oas-ou-admin" && claims.Username != "oas-au-admin" && claims.Username != "oas-oam-admin" {
-			response.Forbidden(c, "access denied")
+			c.Header("Content-Type", "text/html; charset=utf-8")
+			c.String(403, "<h1>403 Forbidden</h1><p>Access denied. System management restricted to OU/AU/OAM admins.</p>")
 			return
 		}
 		c.Header("Content-Type", "text/html; charset=utf-8")
@@ -1841,7 +1844,7 @@ loadUsers();
 }
 
 // consoleHomePageHTML returns the OAS Console home page HTML with navigation.
-func consoleHomePageHTML(username, oasEnv string) string {
+func consoleHomePageHTML(username, oasEnv, token string) string {
 	return `<!DOCTYPE html>
 <html lang="zh">
 <head>
@@ -1883,27 +1886,27 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;b
 <div class="container">
 	<div class="section-title">系统管理（L1）</div>
 	<div class="nav-grid">
-		<a href="/admin/users" class="nav-card">
+		<a href="/admin/users?token=` + token + `" class="nav-card">
 			<h3><span class="nav-icon icon-users">👥</span>账号管理</h3>
 			<p>全局用户列表、新增用户、角色分配、状态管理</p>
 		</a>
-		<a href="/admin/roles" class="nav-card">
+		<a href="/admin/roles?token=` + token + `" class="nav-card">
 			<h3><span class="nav-icon icon-roles">🔐</span>角色权限</h3>
 			<p>角色定义、权限点编码（域:操作）、RBAC 策略</p>
 		</a>
-		<a href="/admin/orgs" class="nav-card">
+		<a href="/admin/orgs?token=` + token + `" class="nav-card">
 			<h3><span class="nav-icon icon-org">🏢</span>组织管理</h3>
 			<p>组织树、成员归属、域间协调</p>
 		</a>
-		<a href="/admin/audit-logs" class="nav-card">
+		<a href="/admin/audit-logs?token=` + token + `" class="nav-card">
 			<h3><span class="nav-icon icon-audit">📋</span>审计日志</h3>
 			<p>全量操作审计、按用户/时间/操作类型检索（仅 2 admin 可读）</p>
 		</a>
-		<a href="/admin/configs" class="nav-card">
+		<a href="/admin/configs?token=` + token + `" class="nav-card">
 			<h3><span class="nav-icon icon-config">⚙️</span>系统配置</h3>
 			<p>系统参数、环境配置、功能开关</p>
 		</a>
-		<a href="/admin/services" class="nav-card">
+		<a href="/admin/services?token=` + token + `" class="nav-card">
 			<h3><span class="nav-icon icon-config">🔌</span>服务注册</h3>
 			<p>MBS/BOS/OAS 服务注册、健康检查、API 密钥</p>
 		</a>
@@ -1911,15 +1914,15 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;b
 
 	<div class="section-title">域管理（L2 · XAM）</div>
 	<div class="nav-grid">
-		<a href="/admin/domains/TAM" class="nav-card">
+		<a href="/admin/domains/TAM?token=` + token + `" class="nav-card">
 			<h3><span class="nav-icon icon-domains">💻</span>TAM 技术域</h3>
 			<p>技术域账号、组织、审计（域级管理视图）</p>
 		</a>
-		<a href="/admin/domains/HAM" class="nav-card">
+		<a href="/admin/domains/HAM?token=` + token + `" class="nav-card">
 			<h3><span class="nav-icon icon-domains">👔</span>HAM 人资云</h3>
 			<p>人资域账号、组织、审计（域级管理视图）</p>
 		</a>
-		<a href="/admin/domains/YAM" class="nav-card">
+		<a href="/admin/domains/YAM?token=` + token + `" class="nav-card">
 			<h3><span class="nav-icon icon-domains">🎯</span>YAM 智场域</h3>
 			<p>智场域账号、组织、审计（域级管理视图）</p>
 		</a>
@@ -1927,7 +1930,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;b
 
 	<div class="section-title">治理看板（L0 · 只读）</div>
 	<div class="nav-grid">
-		<a href="/governance" class="nav-card">
+		<a href="/governance?token=` + token + `" class="nav-card">
 			<h3><span class="nav-icon icon-config">📊</span>治理总览</h3>
 			<p>战略审批、所有权视图、业务系统跳转（O*M 只读）</p>
 		</a>
