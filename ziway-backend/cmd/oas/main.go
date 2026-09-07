@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"math/big"
 	"os"
+	"runtime"
 	"strings"
 	"time"
 
@@ -26,6 +27,7 @@ import (
 	"ziway/backend/pkg/response"
 
 	"github.com/gin-gonic/gin"
+	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
 )
 
@@ -148,6 +150,7 @@ type OASUser struct {
 	Username     string         `gorm:"uniqueIndex;size:64" json:"username"`
 	PasswordHash string         `gorm:"size:128" json:"-"`
 	DisplayName  string         `gorm:"size:64" json:"display_name"`
+	RoleCode     string         `gorm:"size:16;index" json:"role_code"`
 	IdentityType string         `gorm:"size:16;index" json:"identity_type"`
 	EntityType   string         `gorm:"size:8" json:"entity_type"`
 	Domain       string         `gorm:"size:8;index" json:"domain,omitempty"`
@@ -1186,6 +1189,313 @@ func main() {
 			response.OK(c, matrix)
 		})
 
+		// ===== Admin 账号管理（2b-1）=====
+		// 列表（仅 OU/AU）
+		admin.GET("/admin-accounts", func(c *gin.Context) {
+			username, _ := c.Get("username")
+			usernameStr, _ := username.(string)
+			
+			// 仅 OU/AU 可访问
+			if usernameStr != "oas-ou-admin" && usernameStr != "oas-au-admin" {
+				response.Forbidden(c, "only OU/AU admin can manage admin accounts")
+				return
+			}
+			
+			var admins []OASUser
+			database.Where("role_code IN ?", []string{"OU", "AU"}).Find(&admins)
+			response.OK(c, admins)
+		})
+		
+		// 创建 admin 账号（仅 OU/AU）
+		admin.POST("/admin-accounts", func(c *gin.Context) {
+			username, _ := c.Get("username")
+			domain, _ := c.Get("domain")
+			oasEnv, _ := c.Get("oas_env")
+			
+			usernameStr, _ := username.(string)
+			domainStr, _ := domain.(string)
+			oasEnvStr, _ := oasEnv.(string)
+			
+			// 仅 OU/AU 可创建
+			if usernameStr != "oas-ou-admin" && usernameStr != "oas-au-admin" {
+				response.Forbidden(c, "only OU/AU admin can create admin accounts")
+				return
+			}
+			
+			var req struct {
+				Username    string `json:"username" binding:"required"`
+				Password    string `json:"password" binding:"required"`
+				DisplayName string `json:"display_name"`
+				RoleCode    string `json:"role_code" binding:"required"`
+			}
+			if err := c.ShouldBindJSON(&req); err != nil {
+				response.BadRequest(c, "invalid request: "+err.Error())
+				return
+			}
+			
+			// 仅允许 OU/AU 角色
+			if req.RoleCode != "OU" && req.RoleCode != "AU" {
+				response.BadRequest(c, "role_code must be OU or AU")
+				return
+			}
+			
+			// 检查用户名是否已存在
+			var count int64
+			database.Model(&OASUser{}).Where("username = ?", req.Username).Count(&count)
+			if count > 0 {
+				response.BadRequest(c, "username already exists")
+				return
+			}
+			
+			// 生成 user_code
+			userCode := fmt.Sprintf("XHPZ#%s-%d", req.RoleCode, time.Now().UnixNano()%100000000)
+			
+			// 密码哈希
+			passwordHash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
+			if err != nil {
+				response.InternalError(c, "password hash failed: "+err.Error())
+				return
+			}
+			
+			user := OASUser{
+				Username:     req.Username,
+				UserCode:     userCode,
+				DisplayName:  req.DisplayName,
+				PasswordHash: string(passwordHash),
+				RoleCode:     req.RoleCode,
+				Status:       "active",
+				Domain:       domainStr,
+			}
+			
+			if err := database.Create(&user).Error; err != nil {
+				response.InternalError(c, "create failed: "+err.Error())
+				return
+			}
+			
+			// 审计日志
+			database.Create(&AuditLog{
+				UserID:      usernameStr,
+				UserName:    usernameStr,
+				Plane:       "admin",
+				Action:      "admin.account.create",
+				Resource:    "user",
+				ResourceID:  fmt.Sprintf("%d", user.ID),
+				Detail:      fmt.Sprintf("username=%s, role=%s", user.Username, user.RoleCode),
+				IP:          c.ClientIP(),
+				UserAgent:   c.Request.UserAgent(),
+				Environment: oasEnvStr,
+				Domain:      domainStr,
+			})
+			
+			response.OK(c, user)
+		})
+		
+		// 禁用 admin 账号（仅 OU/AU）
+		admin.PUT("/admin-accounts/:id/disable", func(c *gin.Context) {
+			username, _ := c.Get("username")
+			domain, _ := c.Get("domain")
+			oasEnv, _ := c.Get("oas_env")
+			
+			usernameStr, _ := username.(string)
+			domainStr, _ := domain.(string)
+			oasEnvStr, _ := oasEnv.(string)
+			
+			if usernameStr != "oas-ou-admin" && usernameStr != "oas-au-admin" {
+				response.Forbidden(c, "only OU/AU admin can disable admin accounts")
+				return
+			}
+			
+			id, _ := parseUint(c.Param("id"))
+			var user OASUser
+			if err := database.First(&user, id).Error; err != nil {
+				response.NotFound(c, "user not found")
+				return
+			}
+			
+			// 只能禁用 OU/AU 账号
+			if user.RoleCode != "OU" && user.RoleCode != "AU" {
+				response.BadRequest(c, "can only disable OU/AU admin accounts")
+				return
+			}
+			
+			user.Status = "disabled"
+			if err := database.Save(&user).Error; err != nil {
+				response.InternalError(c, "disable failed: "+err.Error())
+				return
+			}
+			
+			// 审计日志
+			database.Create(&AuditLog{
+				UserID:      usernameStr,
+				UserName:    usernameStr,
+				Plane:       "admin",
+				Action:      "admin.account.disable",
+				Resource:    "user",
+				ResourceID:  fmt.Sprintf("%d", user.ID),
+				Detail:      fmt.Sprintf("username=%s, role=%s", user.Username, user.RoleCode),
+				IP:          c.ClientIP(),
+				UserAgent:   c.Request.UserAgent(),
+				Environment: oasEnvStr,
+				Domain:      domainStr,
+			})
+			
+			response.OK(c, user)
+		})
+		
+		// 启用 admin 账号（仅 OU/AU）
+		admin.PUT("/admin-accounts/:id/enable", func(c *gin.Context) {
+			username, _ := c.Get("username")
+			domain, _ := c.Get("domain")
+			oasEnv, _ := c.Get("oas_env")
+			
+			usernameStr, _ := username.(string)
+			domainStr, _ := domain.(string)
+			oasEnvStr, _ := oasEnv.(string)
+			
+			if usernameStr != "oas-ou-admin" && usernameStr != "oas-au-admin" {
+				response.Forbidden(c, "only OU/AU admin can enable admin accounts")
+				return
+			}
+			
+			id, _ := parseUint(c.Param("id"))
+			var user OASUser
+			if err := database.First(&user, id).Error; err != nil {
+				response.NotFound(c, "user not found")
+				return
+			}
+			
+			if user.RoleCode != "OU" && user.RoleCode != "AU" {
+				response.BadRequest(c, "can only enable OU/AU admin accounts")
+				return
+			}
+			
+			user.Status = "active"
+			if err := database.Save(&user).Error; err != nil {
+				response.InternalError(c, "enable failed: "+err.Error())
+				return
+			}
+			
+			// 审计日志
+			database.Create(&AuditLog{
+				UserID:      usernameStr,
+				UserName:    usernameStr,
+				Plane:       "admin",
+				Action:      "admin.account.enable",
+				Resource:    "user",
+				ResourceID:  fmt.Sprintf("%d", user.ID),
+				Detail:      fmt.Sprintf("username=%s, role=%s", user.Username, user.RoleCode),
+				IP:          c.ClientIP(),
+				UserAgent:   c.Request.UserAgent(),
+				Environment: oasEnvStr,
+				Domain:      domainStr,
+			})
+			
+			response.OK(c, user)
+		})
+		
+		// 重置密码（仅 OU/AU）
+		admin.PUT("/admin-accounts/:id/reset-password", func(c *gin.Context) {
+			username, _ := c.Get("username")
+			domain, _ := c.Get("domain")
+			oasEnv, _ := c.Get("oas_env")
+			
+			usernameStr, _ := username.(string)
+			domainStr, _ := domain.(string)
+			oasEnvStr, _ := oasEnv.(string)
+			
+			if usernameStr != "oas-ou-admin" && usernameStr != "oas-au-admin" {
+				response.Forbidden(c, "only OU/AU admin can reset passwords")
+				return
+			}
+			
+			id, _ := parseUint(c.Param("id"))
+			var user OASUser
+			if err := database.First(&user, id).Error; err != nil {
+				response.NotFound(c, "user not found")
+				return
+			}
+			
+			if user.RoleCode != "OU" && user.RoleCode != "AU" {
+				response.BadRequest(c, "can only reset OU/AU admin passwords")
+				return
+			}
+			
+			var req struct {
+				NewPassword string `json:"new_password" binding:"required"`
+			}
+			if err := c.ShouldBindJSON(&req); err != nil {
+				response.BadRequest(c, "invalid request: "+err.Error())
+				return
+			}
+			
+			passwordHash, err := bcrypt.GenerateFromPassword([]byte(req.NewPassword), bcrypt.DefaultCost)
+			if err != nil {
+				response.InternalError(c, "password hash failed: "+err.Error())
+				return
+			}
+			
+			user.PasswordHash = string(passwordHash)
+			if err := database.Save(&user).Error; err != nil {
+				response.InternalError(c, "reset password failed: "+err.Error())
+				return
+			}
+			
+			// 审计日志
+			database.Create(&AuditLog{
+				UserID:      usernameStr,
+				UserName:    usernameStr,
+				Plane:       "admin",
+				Action:      "admin.account.reset_password",
+				Resource:    "user",
+				ResourceID:  fmt.Sprintf("%d", user.ID),
+				Detail:      fmt.Sprintf("username=%s, role=%s", user.Username, user.RoleCode),
+				IP:          c.ClientIP(),
+				UserAgent:   c.Request.UserAgent(),
+				Environment: oasEnvStr,
+				Domain:      domainStr,
+			})
+			
+			response.OK(c, gin.H{"message": "password reset successfully"})
+		})
+
+		// 系统配置只读面板（仅 OU/AU）
+		admin.GET("/system-config", func(c *gin.Context) {
+			username, _ := c.Get("username")
+			usernameStr, _ := username.(string)
+			
+			// 仅 OU/AU 可访问
+			if usernameStr != "oas-ou-admin" && usernameStr != "oas-au-admin" {
+				response.Forbidden(c, "only OU/AU admin can view system config")
+				return
+			}
+			
+			// 读取环境变量（非敏感项）
+			appEnv := os.Getenv("APP_ENV")
+			if appEnv == "" {
+				appEnv = "dev"
+			}
+			oasEnv := os.Getenv("OAS_ENV")
+			if oasEnv == "" {
+				oasEnv = "DEV"
+			}
+			dbDriver := os.Getenv("ZIWAY_DATABASE_DRIVER")
+			if dbDriver == "" {
+				dbDriver = "sqlite"
+			}
+			
+			// 构建配置信息（不暴露敏感项）
+			config := gin.H{
+				"app_env":     appEnv,
+				"oas_env":     oasEnv,
+				"db_driver":   dbDriver,
+				"go_version":  runtime.Version(),
+				"build_time":  "2026-09-08", // 可改为实际构建时间
+				"git_commit":  "fa6cb5d",    // 可改为实际 commit
+			}
+			
+			response.OK(c, config)
+		})
+
 		// 系统配置
 		admin.GET("/configs", func(c *gin.Context) {
 			var items []SystemConfig
@@ -1537,6 +1847,70 @@ func main() {
 		}
 		c.Header("Content-Type", "text/html; charset=utf-8")
 		c.String(200, ownershipPageHTML(claims.Username))
+	})
+
+	// Admin 账号管理页面（仅 OU/AU）
+	r.GET("/admin/admin-accounts", func(c *gin.Context) {
+		if jwtVerifier == nil {
+			response.InternalError(c, "JWT verifier not configured")
+			return
+		}
+		tokenStr := c.Query("token")
+		if tokenStr == "" {
+			auth := c.GetHeader("Authorization")
+			if len(auth) > 7 && auth[:7] == "Bearer " {
+				tokenStr = auth[7:]
+			}
+		}
+		if tokenStr == "" {
+			c.Redirect(302, "/login?redirect=/admin/admin-accounts")
+			return
+		}
+		claims, err := jwtVerifier.Verify(tokenStr)
+		if err != nil {
+			c.Redirect(302, "/login?redirect=/admin/admin-accounts")
+			return
+		}
+		// 仅 OU/AU 可访问（白名单 B）
+		if claims.Username != "oas-ou-admin" && claims.Username != "oas-au-admin" {
+			c.Header("Content-Type", "text/html; charset=utf-8")
+			c.String(403, "<h1>403 Forbidden</h1><p>Access restricted to OU/AU admin.</p>")
+			return
+		}
+		c.Header("Content-Type", "text/html; charset=utf-8")
+		c.String(200, adminAccountsPageHTML(claims.Username))
+	})
+
+	// 系统配置只读面板（仅 OU/AU）
+	r.GET("/admin/system-config", func(c *gin.Context) {
+		if jwtVerifier == nil {
+			response.InternalError(c, "JWT verifier not configured")
+			return
+		}
+		tokenStr := c.Query("token")
+		if tokenStr == "" {
+			auth := c.GetHeader("Authorization")
+			if len(auth) > 7 && auth[:7] == "Bearer " {
+				tokenStr = auth[7:]
+			}
+		}
+		if tokenStr == "" {
+			c.Redirect(302, "/login?redirect=/admin/system-config")
+			return
+		}
+		claims, err := jwtVerifier.Verify(tokenStr)
+		if err != nil {
+			c.Redirect(302, "/login?redirect=/admin/system-config")
+			return
+		}
+		// 仅 OU/AU 可访问（白名单 B）
+		if claims.Username != "oas-ou-admin" && claims.Username != "oas-au-admin" {
+			c.Header("Content-Type", "text/html; charset=utf-8")
+			c.String(403, "<h1>403 Forbidden</h1><p>Access restricted to OU/AU admin.</p>")
+			return
+		}
+		c.Header("Content-Type", "text/html; charset=utf-8")
+		c.String(200, systemConfigPageHTML(claims.Username))
 	})
 
 	// ===== GET /admin/audit-logs — 审计日志页面（白名单 B：仅 2 admin）=====
@@ -3742,6 +4116,238 @@ async function loadOwnership() {
 }
 
 loadOwnership();
+</script>
+</body>
+</html>`
+}
+
+func adminAccountsPageHTML(username string) string {
+	return `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Admin 账号管理 - OAS Console</title>
+<style>
+body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; margin: 0; padding: 20px; background: #f5f5f5; }
+.container { max-width: 1200px; margin: 0 auto; }
+h1 { color: #333; margin-bottom: 20px; }
+.card { background: white; border-radius: 8px; padding: 20px; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+table { width: 100%; border-collapse: collapse; }
+th, td { padding: 12px; text-align: left; border-bottom: 1px solid #eee; }
+th { background: #f9f9f9; font-weight: 600; }
+.btn { padding: 6px 12px; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; }
+.btn-primary { background: #007bff; color: white; }
+.btn-danger { background: #dc3545; color: white; }
+.btn-success { background: #28a745; color: white; }
+.btn:hover { opacity: 0.9; }
+.status-active { color: #28a745; }
+.status-disabled { color: #dc3545; }
+</style>
+</head>
+<body>
+<div class="container">
+<h1>Admin 账号管理</h1>
+<div class="card">
+<button class="btn btn-primary" onclick="showCreateDialog()">创建 Admin 账号</button>
+</div>
+<div class="card">
+<table id="accountsTable">
+<thead>
+<tr>
+  <th>ID</th>
+  <th>用户名</th>
+  <th>用户编码</th>
+  <th>显示名</th>
+  <th>角色</th>
+  <th>状态</th>
+  <th>操作</th>
+</tr>
+</thead>
+<tbody id="accountsBody"></tbody>
+</table>
+</div>
+</div>
+
+<script>
+const token = new URLSearchParams(window.location.search).get('token');
+
+async function loadAccounts() {
+  try {
+    const res = await fetch('/api/v1/admin/admin-accounts', {
+      headers: { 'Authorization': 'Bearer ' + token }
+    });
+    if (!res.ok) throw new Error('加载失败');
+    const data = await res.json();
+    const tbody = document.getElementById('accountsBody');
+    tbody.innerHTML = '';
+    data.forEach(function(acc) {
+      const row = document.createElement('tr');
+      row.innerHTML = 
+        '<td>' + acc.id + '</td>' +
+        '<td>' + acc.username + '</td>' +
+        '<td>' + acc.user_code + '</td>' +
+        '<td>' + (acc.display_name || '-') + '</td>' +
+        '<td>' + acc.role_code + '</td>' +
+        '<td class="status-' + acc.status + '">' + acc.status + '</td>' +
+        '<td>' +
+          (acc.status === 'active' 
+            ? '<button class="btn btn-danger" onclick="disableAccount(' + acc.id + ')">禁用</button>'
+            : '<button class="btn btn-success" onclick="enableAccount(' + acc.id + ')">启用</button>') +
+          ' <button class="btn btn-primary" onclick="resetPassword(' + acc.id + ')">重置密码</button>' +
+        '</td>';
+      tbody.appendChild(row);
+    });
+  } catch (err) {
+    alert('加载失败: ' + err.message);
+  }
+}
+
+function showCreateDialog() {
+  const username = prompt('用户名:');
+  if (!username) return;
+  const password = prompt('密码:');
+  if (!password) return;
+  const displayName = prompt('显示名:');
+  const roleCode = prompt('角色 (OU/AU):');
+  if (roleCode !== 'OU' && roleCode !== 'AU') {
+    alert('角色必须是 OU 或 AU');
+    return;
+  }
+  
+  fetch('/api/v1/admin/admin-accounts', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': 'Bearer ' + token
+    },
+    body: JSON.stringify({
+      username: username,
+      password: password,
+      display_name: displayName,
+      role_code: roleCode
+    })
+  }).then(function(res) {
+    if (!res.ok) throw new Error('创建失败');
+    alert('创建成功');
+    loadAccounts();
+  }).catch(function(err) {
+    alert('创建失败: ' + err.message);
+  });
+}
+
+function disableAccount(id) {
+  if (!confirm('确认禁用此账号？')) return;
+  fetch('/api/v1/admin/admin-accounts/' + id + '/disable', {
+    method: 'PUT',
+    headers: { 'Authorization': 'Bearer ' + token }
+  }).then(function(res) {
+    if (!res.ok) throw new Error('禁用失败');
+    alert('禁用成功');
+    loadAccounts();
+  }).catch(function(err) {
+    alert('禁用失败: ' + err.message);
+  });
+}
+
+function enableAccount(id) {
+  fetch('/api/v1/admin/admin-accounts/' + id + '/enable', {
+    method: 'PUT',
+    headers: { 'Authorization': 'Bearer ' + token }
+  }).then(function(res) {
+    if (!res.ok) throw new Error('启用失败');
+    alert('启用成功');
+    loadAccounts();
+  }).catch(function(err) {
+    alert('启用失败: ' + err.message);
+  });
+}
+
+function resetPassword(id) {
+  const newPassword = prompt('新密码:');
+  if (!newPassword) return;
+  
+  fetch('/api/v1/admin/admin-accounts/' + id + '/reset-password', {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': 'Bearer ' + token
+    },
+    body: JSON.stringify({ new_password: newPassword })
+  }).then(function(res) {
+    if (!res.ok) throw new Error('重置失败');
+    alert('密码重置成功');
+  }).catch(function(err) {
+    alert('重置失败: ' + err.message);
+  });
+}
+
+loadAccounts();
+</script>
+</body>
+</html>`
+}
+
+func systemConfigPageHTML(username string) string {
+	return `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>系统配置 - OAS Console</title>
+<style>
+body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; margin: 0; padding: 20px; background: #f5f5f5; }
+.container { max-width: 800px; margin: 0 auto; }
+h1 { color: #333; margin-bottom: 20px; }
+.card { background: white; border-radius: 8px; padding: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+.config-item { margin-bottom: 15px; padding: 10px; background: #f9f9f9; border-radius: 4px; }
+.config-label { font-weight: 600; color: #555; margin-bottom: 5px; }
+.config-value { color: #333; font-family: monospace; }
+</style>
+</head>
+<body>
+<div class="container">
+<h1>系统配置（只读）</h1>
+<div class="card" id="configCard">
+<p>加载中...</p>
+</div>
+</div>
+
+<script>
+const token = new URLSearchParams(window.location.search).get('token');
+
+async function loadConfig() {
+  try {
+    const res = await fetch('/api/v1/admin/system-config', {
+      headers: { 'Authorization': 'Bearer ' + token }
+    });
+    if (!res.ok) throw new Error('加载失败');
+    const data = await res.json();
+    
+    const card = document.getElementById('configCard');
+    card.innerHTML = '';
+    
+    const items = [
+      { label: '应用环境', key: 'app_env' },
+      { label: 'OAS 环境', key: 'oas_env' },
+      { label: '数据库驱动', key: 'db_driver' },
+      { label: 'Go 版本', key: 'go_version' },
+      { label: '构建时间', key: 'build_time' },
+      { label: 'Git Commit', key: 'git_commit' }
+    ];
+    
+    items.forEach(function(item) {
+      const div = document.createElement('div');
+      div.className = 'config-item';
+      div.innerHTML = 
+        '<div class="config-label">' + item.label + '</div>' +
+        '<div class="config-value">' + (data[item.key] || '-') + '</div>';
+      card.appendChild(div);
+    });
+  } catch (err) {
+    alert('加载失败: ' + err.message);
+  }
+}
+
+loadConfig();
 </script>
 </body>
 </html>`
