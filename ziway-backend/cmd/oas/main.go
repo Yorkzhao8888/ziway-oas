@@ -250,9 +250,10 @@ func main() {
 	)
 
 	// Migrate existing admin accounts to have proper role_code
-	database.Model(&OASUser{}).Where("username = ? AND role_code = ?", "oas-ou-admin", "").Update("role_code", "SU")
-	database.Model(&OASUser{}).Where("username = ? AND role_code = ?", "oas-au-admin", "").Update("role_code", "AU")
-	database.Model(&OASUser{}).Where("username = ? AND role_code = ?", "oas-oam-admin", "").Update("role_code", "OAM")
+	// 迁移现有 admin 账号的 role_code（如果为空）
+	database.Model(&OASUser{}).Where("username = ? AND (role_code = '' OR role_code IS NULL)", "oas-ou-admin").Update("role_code", "SU")
+	database.Model(&OASUser{}).Where("username = ? AND (role_code = '' OR role_code IS NULL)", "oas-au-admin").Update("role_code", "AU")
+	database.Model(&OASUser{}).Where("username = ? AND (role_code = '' OR role_code IS NULL)", "oas-oam-admin").Update("role_code", "OAM")
 
 	// Login rate limiter: 5 failures = 15 min lockout
 	loginLimiter := ratelimit.NewLoginLimiter(5, 15*time.Minute)
@@ -809,14 +810,34 @@ func main() {
 		// Otherwise, try JWT
 		middleware.JWTAuth(jwtVerifier, nil, log)(c)
 	})
-	// Allow API keys or specific admin users
+	// Allow API keys or admin role users
 	admin.Use(func(c *gin.Context) {
 		authType, _ := c.Get("auth_type")
 		if authType == "api_key" {
 			c.Next()
 			return
 		}
-		middleware.RequireUsers("oas-ou-admin", "oas-au-admin", "oas-oam-admin")(c)
+		
+		// Check if user has admin role (SU/OU/AU)
+		username, _ := c.Get("username")
+		if username == nil {
+			response.Unauthorized(c, "unauthorized")
+			return
+		}
+		
+		var user OASUser
+		if err := database.Where("username = ?", username).First(&user).Error; err != nil {
+			response.Unauthorized(c, "user not found")
+			return
+		}
+		
+		// Check if user has admin role
+		if user.RoleCode != "SU" && user.RoleCode != "OU" && user.RoleCode != "AU" {
+			response.Forbidden(c, "access denied: admin role required")
+			return
+		}
+		
+		c.Next()
 	})
 	{
 		// ===== 治理看板 (/admin/dashboard/*) =====
@@ -2184,7 +2205,66 @@ func main() {
 		})
 
 		// 审计日志路由组 — 白名单 A + XAM 角色放行，handler 内再做细粒度检查
-	adminAuditLogs := api.Group("/admin/audit-logs", middleware.JWTAuth(jwtVerifier, nil, log), func(c *gin.Context) {
+	adminAuditLogs := api.Group("/admin/audit-logs", func(c *gin.Context) {
+		// Try API Key first
+		var apiKeyStr string
+		
+		// Check Authorization header (Bearer)
+		authHeader := c.GetHeader("Authorization")
+		if strings.HasPrefix(authHeader, "Bearer ") {
+			apiKeyStr = authHeader[7:]
+		}
+		
+		// Check X-API-Key header
+		if apiKeyStr == "" {
+			apiKeyStr = c.GetHeader("X-API-Key")
+		}
+		
+		// Check api_key query parameter
+		if apiKeyStr == "" {
+			apiKeyStr = c.Query("api_key")
+		}
+		
+		if apiKeyStr != "" {
+			// Extract prefix (first part before _)
+			parts := strings.SplitN(apiKeyStr, "_", 3)
+			if len(parts) >= 2 {
+				prefix := parts[0] + "_" + parts[1]
+				
+				// Look up API key by prefix
+				var key APIKey
+				if err := database.Where("key_prefix = ?", prefix).First(&key).Error; err == nil {
+					// Check status
+					if key.Status == "active" {
+						// Check expiry
+						if key.ExpiresAt == nil || !key.ExpiresAt.Before(time.Now()) {
+							// Verify key hash
+							if err := bcrypt.CompareHashAndPassword([]byte(key.KeyHash), []byte(apiKeyStr)); err == nil {
+								// API Key auth succeeded
+								c.Set("api_key_id", key.ID)
+								c.Set("api_key_name", key.KeyName)
+								c.Set("api_key_scopes", key.Scopes)
+								c.Set("auth_type", "api_key")
+								c.Set("username", "api-key:"+key.KeyName)
+								c.Next()
+								return
+							}
+						}
+					}
+				}
+			}
+		}
+		
+		// Otherwise, try JWT
+		middleware.JWTAuth(jwtVerifier, nil, log)(c)
+	}, func(c *gin.Context) {
+		// Allow API keys
+		authType, _ := c.Get("auth_type")
+		if authType == "api_key" {
+			c.Next()
+			return
+		}
+		
 		username, _ := c.Get("username")
 		rolesRaw, _ := c.Get("roles")
 		var roles []string
