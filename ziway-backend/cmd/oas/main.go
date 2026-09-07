@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"go.uber.org/zap"
+	"ziway/backend/pkg/envpolicy"
 	"ziway/backend/pkg/password"
 	"ziway/backend/pkg/ratelimit"
 
@@ -43,17 +44,18 @@ type SystemConfig struct {
 
 // AuditLog 审计日志（不可篡改）
 type AuditLog struct {
-	ID         uint64    `gorm:"primarykey" json:"id"`
-	UserID     string    `gorm:"index;size:32" json:"user_id"`
-	UserName   string    `gorm:"size:64" json:"user_name"`
-	Plane      string    `gorm:"size:16;index" json:"plane"` // owner / admin
-	Action     string    `gorm:"size:64;index" json:"action"`
-	Resource   string    `gorm:"size:128" json:"resource"`
-	ResourceID string    `gorm:"size:32" json:"resource_id"`
-	Detail     string    `gorm:"type:text" json:"detail"`
-	IP         string    `gorm:"size:64" json:"ip"`
-	UserAgent  string    `gorm:"size:256" json:"user_agent"`
-	CreatedAt  time.Time `json:"created_at" json:"created_at"`
+	ID          uint64    `gorm:"primarykey" json:"id"`
+	UserID      string    `gorm:"index;size:32" json:"user_id"`
+	UserName    string    `gorm:"size:64" json:"user_name"`
+	Plane       string    `gorm:"size:16;index" json:"plane"` // owner / admin
+	Action      string    `gorm:"size:64;index" json:"action"`
+	Resource    string    `gorm:"size:128" json:"resource"`
+	ResourceID  string    `gorm:"size:32" json:"resource_id"`
+	Detail      string    `gorm:"type:text" json:"detail"`
+	IP          string    `gorm:"size:64" json:"ip"`
+	UserAgent   string    `gorm:"size:256" json:"user_agent"`
+	Environment string    `gorm:"size:16;index" json:"environment"` // DEV/BETA/RC/PROD
+	CreatedAt   time.Time `json:"created_at" json:"created_at"`
 }
 
 // DomainRegistry 事业场生命周期管理（Owner Plane）
@@ -188,6 +190,11 @@ func main() {
 	}
 	log := logger.New(env)
 	defer log.Sync()
+
+	// ===== OAS Environment (四环境系统) =====
+	// OAS_ENV controls convenience capability availability (DEV/BETA/RC/PROD)
+	oasEnv := envpolicy.GetOASEnv()
+	log.Info("OAS environment initialized", zap.String("oas_env", oasEnv.String()))
 
 	database, err := db.InitDB(v, log)
 	if err != nil {
@@ -372,12 +379,15 @@ func main() {
 		}
 		// Audit log: token issued
 		database.Create(&AuditLog{
-			UserID:   user.UserCode,
-			UserName: user.DisplayName,
-			Plane:    "admin",
-			Action:   "auth.login",
-			Resource: "jwt",
-			Detail:   fmt.Sprintf("result=success, role=%s, token_id=%s", activeRole, claims.TokenID),
+			UserID:      user.UserCode,
+			UserName:    user.DisplayName,
+			Plane:       "admin",
+			Action:      "auth.login",
+			Resource:    "jwt",
+			Detail:      fmt.Sprintf("env=%s, result=success, role=%s, token_id=%s", oasEnv.String(), activeRole, claims.TokenID),
+			IP:          c.ClientIP(),
+			UserAgent:   c.Request.UserAgent(),
+			Environment: oasEnv.String(),
 		})
 		response.OK(c, gin.H{
 			"access_token": token,
@@ -398,8 +408,10 @@ func main() {
 	}
 	log.Info("product edition", zap.String("edition", edition))
 
-	if edition == "beta" {
-		// POST /api/v1/auth/quick-login — one-click login for testing (beta only)
+	// ===== Quick Login & Test Accounts (DEV/BETA only) =====
+	// OAS_ENV controls availability: DEV and BETA allow, RC and PROD return 404 (fail-closed)
+	if envpolicy.IsQuickLoginEnabled(oasEnv) {
+		// POST /api/v1/auth/quick-login — one-click login for testing
 		// Request: {"role": "SU"} or {"username": "admin"}
 		// Returns JWT without password verification
 		api.POST("/auth/quick-login", func(c *gin.Context) {
@@ -474,12 +486,15 @@ func main() {
 
 			// Audit log
 			database.Create(&AuditLog{
-				UserID:   user.UserCode,
-				UserName: user.DisplayName,
-				Plane:    "admin",
-				Action:   "auth.quick-login",
-				Resource: "jwt",
-				Detail:   fmt.Sprintf("edition=beta, role=%s, token_id=%s", activeRole, claims.TokenID),
+				UserID:      user.UserCode,
+				UserName:    user.DisplayName,
+				Plane:       "admin",
+				Action:      "auth.quick-login",
+				Resource:    "jwt",
+				Detail:      fmt.Sprintf("env=%s, role=%s, token_id=%s", oasEnv.String(), activeRole, claims.TokenID),
+				IP:          c.ClientIP(),
+				UserAgent:   c.Request.UserAgent(),
+				Environment: oasEnv.String(),
 			})
 
 			response.OK(c, gin.H{
@@ -518,11 +533,11 @@ func main() {
 	}
 
 	// ===== POST /api/v1/auth/dev-token — temporary token for development =====
-	// Environment-aware: PROD always disabled (security red line), non-PROD default enabled
+	// Environment-aware: PROD always disabled (security red line), only DEV allows dev-token
 	isProd := os.Getenv("COZE_PROJECT_ENV") == "PROD"
 	devTokenEnv := os.Getenv("ZIWAY_DEV_TOKEN_ENABLED")
-	// PROD: always disabled; non-PROD: enabled unless explicitly set to "false"
-	devTokenEnabled := !isProd && devTokenEnv != "false"
+	// PROD: always disabled; non-PROD: enabled only if OAS_ENV=DEV and not explicitly set to "false"
+	devTokenEnabled := !isProd && envpolicy.IsDevTokenEnabled(oasEnv) && devTokenEnv != "false"
 	if devTokenEnabled {
 		api.POST("/auth/dev-token", func(c *gin.Context) {
 			if jwtIssuer == nil {
@@ -608,12 +623,15 @@ func main() {
 
 			// Audit log
 			database.Create(&AuditLog{
-				UserID:   user.UserCode,
-				UserName: user.DisplayName,
-				Plane:    "admin",
-				Action:   "auth.dev-token",
-				Resource: "jwt",
-				Detail:   fmt.Sprintf("mode=dev-token, role=%s, expires=%dm, ip=%s, token_id=%s", activeRole, req.ExpiresMinutes, c.ClientIP(), claims.TokenID),
+				UserID:      user.UserCode,
+				UserName:    user.DisplayName,
+				Plane:       "admin",
+				Action:      "auth.dev-token",
+				Resource:    "jwt",
+				Detail:      fmt.Sprintf("env=%s, mode=dev-token, role=%s, expires=%dm, ip=%s, token_id=%s", oasEnv.String(), activeRole, req.ExpiresMinutes, c.ClientIP(), claims.TokenID),
+				IP:          c.ClientIP(),
+				UserAgent:   c.Request.UserAgent(),
+				Environment: oasEnv.String(),
 			})
 
 			response.OK(c, gin.H{
@@ -624,7 +642,7 @@ func main() {
 				"user_code":  user.UserCode,
 			})
 		})
-		log.Info("DEV token endpoint enabled", zap.Bool("is_prod", isProd), zap.String("ZIWAY_DEV_TOKEN_ENABLED", devTokenEnv))
+		log.Info("DEV token endpoint enabled (non-PROD environment)", zap.String("oas_env", oasEnv.String()), zap.Bool("is_prod", isProd), zap.String("ZIWAY_DEV_TOKEN_ENABLED", devTokenEnv))
 	}
 
 	// ===== Owner Plane (/owner/*) — OU 权限 =====
@@ -913,12 +931,15 @@ func main() {
 			return
 		}
 		database.Create(&AuditLog{
-			UserID:   user.UserCode,
-			UserName: user.DisplayName,
-			Plane:    "admin",
-			Action:   "auth.login",
-			Resource: "jwt",
-			Detail:   fmt.Sprintf("result=success, role=%s, token_id=%s", activeRole, claims.TokenID),
+			UserID:      user.UserCode,
+			UserName:    user.DisplayName,
+			Plane:       "admin",
+			Action:      "auth.login",
+			Resource:    "jwt",
+			Detail:      fmt.Sprintf("env=%s, result=success, role=%s, token_id=%s", oasEnv.String(), activeRole, claims.TokenID),
+			IP:          c.ClientIP(),
+			UserAgent:   c.Request.UserAgent(),
+			Environment: oasEnv.String(),
 		})
 		response.OK(c, gin.H{
 			"access_token": token,
@@ -1038,12 +1059,15 @@ func main() {
 			}
 		}
 		database.Create(&AuditLog{
-			Plane:    "admin",
-			Action:   "user.create",
-			UserID:   user.UserCode,
-			UserName: user.DisplayName,
-			Resource: "user",
-			Detail:   fmt.Sprintf("username=%s, roles=%v", req.Username, roleCodes),
+			Plane:       "admin",
+			Action:      "user.create",
+			UserID:      user.UserCode,
+			UserName:    user.DisplayName,
+			Resource:    "user",
+			Detail:      fmt.Sprintf("env=%s, username=%s, roles=%v", oasEnv.String(), req.Username, roleCodes),
+			IP:          c.ClientIP(),
+			UserAgent:   c.Request.UserAgent(),
+			Environment: oasEnv.String(),
 		})
 		response.Created(c, gin.H{"id": user.ID, "username": user.Username, "user_code": user.UserCode})
 	})
@@ -1078,10 +1102,13 @@ func main() {
 			}
 		}
 		database.Create(&AuditLog{
-			Plane:    "admin",
-			Action:   "user.update_roles",
-			Resource: "user",
-			Detail:   fmt.Sprintf("user_id=%d, roles=%v", id, req.Roles),
+			Plane:       "admin",
+			Action:      "user.update_roles",
+			Resource:    "user",
+			Detail:      fmt.Sprintf("env=%s, user_id=%d, roles=%v", oasEnv.String(), id, req.Roles),
+			IP:          c.ClientIP(),
+			UserAgent:   c.Request.UserAgent(),
+			Environment: oasEnv.String(),
 		})
 		response.OK(c, nil)
 	})
@@ -1109,10 +1136,13 @@ func main() {
 		}
 		database.Model(&OASUser{}).Where("id = ?", id).Update("status", req.Status)
 		database.Create(&AuditLog{
-			Plane:    "admin",
-			Action:   "user.update_status",
-			Resource: "user",
-			Detail:   fmt.Sprintf("user_id=%d, status=%s", id, req.Status),
+			Plane:       "admin",
+			Action:      "user.update_status",
+			Resource:    "user",
+			Detail:      fmt.Sprintf("env=%s, user_id=%d, status=%s", oasEnv.String(), id, req.Status),
+			IP:          c.ClientIP(),
+			UserAgent:   c.Request.UserAgent(),
+			Environment: oasEnv.String(),
 		})
 		response.OK(c, nil)
 	})
