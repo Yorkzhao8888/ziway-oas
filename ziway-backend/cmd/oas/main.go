@@ -1386,7 +1386,11 @@ func main() {
 		rolesRaw, _ := c.Get("roles")
 		var roles []string
 		if rolesRaw != nil {
-			if rolesStr, ok := rolesRaw.(string); ok && rolesStr != "" {
+			// JWT middleware sets roles as []string
+			if rolesSlice, ok := rolesRaw.([]string); ok {
+				roles = rolesSlice
+			} else if rolesStr, ok := rolesRaw.(string); ok && rolesStr != "" {
+				// Fallback: comma-separated string
 				roles = strings.Split(rolesStr, ",")
 			}
 		}
