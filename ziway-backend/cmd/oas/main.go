@@ -922,6 +922,15 @@ func main() {
 
 		// ===== 战略审批工作台 (/admin/approvals) =====
 		admin.GET("/approvals", func(c *gin.Context) {
+			username, _ := c.Get("username")
+			usernameStr, _ := username.(string)
+			
+			// 白名单 B: SU/OU/AU
+			if !isInAdminWhitelistB(database, usernameStr) {
+				response.Forbidden(c, "only SU/OU/AU admin can view approvals")
+				return
+			}
+			
 			var approvals []ApprovalRequest
 			database.Order("created_at DESC").Find(&approvals)
 			response.OK(c, approvals)
@@ -939,9 +948,9 @@ func main() {
 			domainStr, _ := domain.(string)
 			oasEnvStr, _ := oasEnv.(string)
 			
-			// 仅 OU/AU 可发起审批
-			if usernameStr != "oas-ou-admin" && usernameStr != "oas-au-admin" {
-				response.Forbidden(c, "only OU/AU admin can create approvals")
+			// 白名单 B: SU/OU/AU
+			if !isInAdminWhitelistB(database, usernameStr) {
+				response.Forbidden(c, "only SU/OU/AU admin can create approvals")
 				return
 			}
 			
@@ -1012,9 +1021,9 @@ func main() {
 			domainStr, _ := domain.(string)
 			oasEnvStr, _ := oasEnv.(string)
 			
-			// 仅 OU/AU 可审批
-			if usernameStr != "oas-ou-admin" && usernameStr != "oas-au-admin" {
-				response.Forbidden(c, "only OU/AU admin can approve")
+			// 白名单 B: SU/OU/AU
+			if !isInAdminWhitelistB(database, usernameStr) {
+				response.Forbidden(c, "only SU/OU/AU admin can approve")
 				return
 			}
 			
@@ -1186,9 +1195,9 @@ func main() {
 			domainStr, _ := domain.(string)
 			oasEnvStr, _ := oasEnv.(string)
 			
-			// 仅 OU/AU 可删除
-			if usernameStr != "oas-ou-admin" && usernameStr != "oas-au-admin" {
-				response.Forbidden(c, "only OU/AU admin can delete approvals")
+			// 白名单 B: SU/OU/AU
+			if !isInAdminWhitelistB(database, usernameStr) {
+				response.Forbidden(c, "only SU/OU/AU admin can delete approvals")
 				return
 			}
 			
