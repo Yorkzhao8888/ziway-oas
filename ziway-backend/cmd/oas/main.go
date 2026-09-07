@@ -398,11 +398,17 @@ func main() {
 		database.Model(&user).Update("last_login_at", &now)
 		// Get user roles
 		var roles []string
-		database.Table("user_roles").
-			Select("r.role_code").
-			Joins("JOIN roles r ON r.id = user_roles.role_id").
-			Where("user_roles.user_id = ?", user.ID).
-			Pluck("r.role_code", &roles)
+		// 优先使用 users.role_code 作为 JWT role 的唯一来源
+		if user.RoleCode != "" {
+			roles = []string{user.RoleCode}
+		} else {
+			// 如果 users.role_code 为空，才查询 user_roles 表
+			database.Table("user_roles").
+				Select("r.role_code").
+				Joins("JOIN roles r ON r.id = user_roles.role_id").
+				Where("user_roles.user_id = ?", user.ID).
+				Pluck("r.role_code", &roles)
+		}
 		activeRole := ""
 		if len(roles) > 0 {
 			activeRole = roles[0]
@@ -505,11 +511,17 @@ func main() {
 
 			// Get user roles
 			var roles []string
-			database.Table("user_roles").
-				Select("r.role_code").
-				Joins("JOIN roles r ON r.id = user_roles.role_id").
-				Where("user_roles.user_id = ?", user.ID).
-				Pluck("r.role_code", &roles)
+			// 优先使用 users.role_code 作为 JWT role 的唯一来源
+			if user.RoleCode != "" {
+				roles = []string{user.RoleCode}
+			} else {
+				// 如果 users.role_code 为空，才查询 user_roles 表
+				database.Table("user_roles").
+					Select("r.role_code").
+					Joins("JOIN roles r ON r.id = user_roles.role_id").
+					Where("user_roles.user_id = ?", user.ID).
+					Pluck("r.role_code", &roles)
+			}
 			activeRole := ""
 			if len(roles) > 0 {
 				activeRole = roles[0]
@@ -2769,14 +2781,16 @@ func main() {
 		now := time.Now()
 		database.Model(&user).Update("last_login_at", &now)
 		var roles []string
-		database.Table("user_roles").
-			Select("r.role_code").
-			Joins("JOIN roles r ON r.id = user_roles.role_id").
-			Where("user_roles.user_id = ?", user.ID).
-			Pluck("r.role_code", &roles)
-		// If no roles in user_roles, fall back to role_code from OASUser
-		if len(roles) == 0 && user.RoleCode != "" {
+		// 优先使用 users.role_code 作为 JWT role 的唯一来源
+		if user.RoleCode != "" {
 			roles = []string{user.RoleCode}
+		} else {
+			// 如果 users.role_code 为空，才查询 user_roles 表
+			database.Table("user_roles").
+				Select("r.role_code").
+				Joins("JOIN roles r ON r.id = user_roles.role_id").
+				Where("user_roles.user_id = ?", user.ID).
+				Pluck("r.role_code", &roles)
 		}
 		activeRole := ""
 		if len(roles) > 0 {
@@ -2891,6 +2905,12 @@ func main() {
 		var existing OASUser
 		if database.Where("username = ?", req.Username).First(&existing).Error == nil {
 			response.BadRequest(c, "username already exists")
+			return
+		}
+		// 校验 role_code 是否存在
+		var roleCheck OASRole
+		if database.Where("role_code = ?", req.RoleCode).First(&roleCheck).Error != nil {
+			response.BadRequest(c, "role_code not found: "+req.RoleCode)
 			return
 		}
 		hash, err := password.Hash(req.Password)
@@ -3020,6 +3040,46 @@ func main() {
 			Environment: oasEnv.String(),
 		})
 		response.OK(c, nil)
+	})
+
+	// DELETE /api/v1/admin/users/:id — 删除用户（白名单 B：仅 SU/OU/AU）
+	adminUsers.DELETE("/users/:id", func(c *gin.Context) {
+		id, _ := parseUint(c.Param("id"))
+		var targetUser OASUser
+		if database.First(&targetUser, id).Error != nil {
+			response.NotFound(c, "user not found")
+			return
+		}
+		// 白名单 B：删除 admin 账号仅 OU/AU admin 可操作
+		operatorUsername, _ := c.Get("username")
+		operatorRoleCode, _ := c.Get("role_code")
+		if isAdminAccount(targetUser.Username) {
+			if !isInAdminWhitelistB(database, fmt.Sprintf("%v", operatorUsername), fmt.Sprintf("%v", operatorRoleCode)) {
+				response.Forbidden(c, "only SU/OU/AU admin can delete admin accounts")
+				return
+			}
+		}
+		// 删除用户
+		if err := database.Delete(&targetUser).Error; err != nil {
+			response.InternalError(c, "failed to delete user: "+err.Error())
+			return
+		}
+		// 删除用户角色关联
+		database.Where("user_id = ?", id).Delete(&OASUserRole{})
+		// 审计日志
+		database.Create(&AuditLog{
+			Plane:       "admin",
+			Action:      "admin.account.delete",
+			UserID:      targetUser.UserCode,
+			UserName:    targetUser.DisplayName,
+			Resource:    "user",
+			Detail:      fmt.Sprintf("env=%s, user_id=%d, username=%s", oasEnv.String(), id, targetUser.Username),
+			IP:          c.ClientIP(),
+			UserAgent:   c.Request.UserAgent(),
+			Environment: oasEnv.String(),
+			Domain:      targetUser.Domain,
+		})
+		response.OK(c, gin.H{"id": id, "username": targetUser.Username})
 	})
 
 	// GET /api/v1/auth/roles — list available roles
@@ -3828,16 +3888,28 @@ func seedTestUsers(database *gorm.DB, log *zap.Logger, edition string) {
 		RoleName     string
 	}{
 		{UserCode: "XHPZ#OU-ADMIN", Username: "oas-ou-admin", DisplayName: "OAS 组织管理员", IdentityType: "OU", RoleCode: "SU", RoleName: "System User"},
-		{UserCode: "XHPZ#AU-ADMIN", Username: "oas-au-admin", DisplayName: "OAS 运营管理员", IdentityType: "AU", RoleCode: "SU", RoleName: "System User"},
-		{UserCode: "XHPZ#OAM-ADMIN", Username: "oas-oam-admin", DisplayName: "OAS 权限执行管理员", IdentityType: "OAM", RoleCode: "SU", RoleName: "System User"},
+		{UserCode: "XHPZ#AU-ADMIN", Username: "oas-au-admin", DisplayName: "OAS 运营管理员", IdentityType: "AU", RoleCode: "AU", RoleName: "AU User"},
+		{UserCode: "XHPZ#OAM-ADMIN", Username: "oas-oam-admin", DisplayName: "OAS 权限执行管理员", IdentityType: "OAM", RoleCode: "OAM", RoleName: "OAM User"},
 	}
 
-	// 确保 SU 角色存在
+	// 确保 SU/AU/OAM 角色存在
 	var suRole OASRole
 	database.Where("role_code = ?", "SU").First(&suRole)
 	if suRole.ID == 0 {
 		suRole = OASRole{RoleCode: "SU", Name: "System User", Description: "System User role"}
 		database.Create(&suRole)
+	}
+	var auRole OASRole
+	database.Where("role_code = ?", "AU").First(&auRole)
+	if auRole.ID == 0 {
+		auRole = OASRole{RoleCode: "AU", Name: "AU User", Description: "AU User role"}
+		database.Create(&auRole)
+	}
+	var oamRole OASRole
+	database.Where("role_code = ?", "OAM").First(&oamRole)
+	if oamRole.ID == 0 {
+		oamRole = OASRole{RoleCode: "OAM", Name: "OAM User", Description: "OAM User role"}
+		database.Create(&oamRole)
 	}
 
 	// Seed XAM 域管理角色（TAM/HAM/YAM/VAM）
