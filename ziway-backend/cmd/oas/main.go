@@ -148,6 +148,7 @@ type OASUser struct {
 	DisplayName  string         `gorm:"size:64" json:"display_name"`
 	IdentityType string         `gorm:"size:16;index" json:"identity_type"`
 	EntityType   string         `gorm:"size:8" json:"entity_type"`
+	Domain       string         `gorm:"size:8;index" json:"domain,omitempty"`
 	Status       string         `gorm:"size:16;default:active" json:"status"`
 	LastLoginAt  *time.Time     `json:"last_login_at,omitempty"`
 	CreatedAt    time.Time      `json:"created_at"`
@@ -1376,12 +1377,19 @@ func main() {
 	})
 
 	// ===== Organization Management (GET/POST/PUT/DELETE /admin/orgs) — JWT + whitelist A =====
-	adminOrgs := api.Group("/admin/orgs", middleware.JWTAuth(jwtVerifier, nil, log), middleware.RequireUsers("oas-ou-admin", "oas-au-admin", "oas-oam-admin"))
+	adminOrgs := api.Group("/admin/orgs", middleware.JWTAuth(jwtVerifier, nil, log), middleware.RequireUsers("oas-ou-admin", "oas-au-admin", "oas-oam-admin"), middleware.DomainFilter())
 	{
 		// List organizations (with tree structure)
 		adminOrgs.GET("", func(c *gin.Context) {
 			var orgs []model.Organization
-			if err := database.Preload("Parent").Preload("Children").Find(&orgs).Error; err != nil {
+			query := database.Preload("Parent").Preload("Children")
+			
+			// Apply domain filter if present
+			if filterDomain, ok := middleware.GetFilterDomain(c); ok && filterDomain != "" {
+				query = query.Where("domain = ?", filterDomain)
+			}
+			
+			if err := query.Find(&orgs).Error; err != nil {
 				response.InternalError(c, "load orgs failed: "+err.Error())
 				return
 			}
@@ -1403,7 +1411,14 @@ func main() {
 		adminOrgs.GET("/:id", func(c *gin.Context) {
 			id, _ := parseUint(c.Param("id"))
 			var org model.Organization
-			if err := database.Preload("Parent").Preload("Children").Preload("Members").First(&org, id).Error; err != nil {
+			query := database.Preload("Parent").Preload("Children").Preload("Members")
+			
+			// Apply domain filter if present
+			if filterDomain, ok := middleware.GetFilterDomain(c); ok && filterDomain != "" {
+				query = query.Where("domain = ?", filterDomain)
+			}
+			
+			if err := query.First(&org, id).Error; err != nil {
 				response.NotFound(c, "org not found")
 				return
 			}
@@ -1539,6 +1554,18 @@ func main() {
 		// Get organization members
 		adminOrgs.GET("/:id/members", func(c *gin.Context) {
 			id, _ := parseUint(c.Param("id"))
+			
+			// First check if org exists and belongs to user's domain
+			var org model.Organization
+			orgQuery := database
+			if filterDomain, ok := middleware.GetFilterDomain(c); ok && filterDomain != "" {
+				orgQuery = orgQuery.Where("domain = ?", filterDomain)
+			}
+			if err := orgQuery.First(&org, id).Error; err != nil {
+				response.NotFound(c, "org not found")
+				return
+			}
+			
 			var members []model.UserOrganization
 			if err := database.Where("organization_id = ?", id).Find(&members).Error; err != nil {
 				response.InternalError(c, "load members failed: "+err.Error())
@@ -1550,11 +1577,18 @@ func main() {
 		// Add member to organization
 		adminOrgs.POST("/:id/members", func(c *gin.Context) {
 			id, _ := parseUint(c.Param("id"))
+			
+			// First check if org exists and belongs to user's domain
 			var org model.Organization
-			if err := database.First(&org, id).Error; err != nil {
+			orgQuery := database
+			if filterDomain, ok := middleware.GetFilterDomain(c); ok && filterDomain != "" {
+				orgQuery = orgQuery.Where("domain = ?", filterDomain)
+			}
+			if err := orgQuery.First(&org, id).Error; err != nil {
 				response.NotFound(c, "org not found")
 				return
 			}
+			
 			var req struct {
 				UserID uint   `json:"user_id" binding:"required"`
 				Role   string `json:"role"`
@@ -1600,11 +1634,18 @@ func main() {
 		adminOrgs.DELETE("/:id/members/:userId", func(c *gin.Context) {
 			id, _ := parseUint(c.Param("id"))
 			userId, _ := parseUint(c.Param("userId"))
+			
+			// First check if org exists and belongs to user's domain
 			var org model.Organization
-			if err := database.First(&org, id).Error; err != nil {
+			orgQuery := database
+			if filterDomain, ok := middleware.GetFilterDomain(c); ok && filterDomain != "" {
+				orgQuery = orgQuery.Where("domain = ?", filterDomain)
+			}
+			if err := orgQuery.First(&org, id).Error; err != nil {
 				response.NotFound(c, "org not found")
 				return
 			}
+			
 			var member model.UserOrganization
 			if err := database.Where("organization_id = ? AND user_id = ?", org.ID, userId).First(&member).Error; err != nil {
 				response.NotFound(c, "member not found")
