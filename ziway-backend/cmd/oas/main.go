@@ -1380,8 +1380,23 @@ func main() {
 		response.OK(c, gin.H{"message": "role deleted"})
 	})
 
-	// ===== Organization Management (GET/POST/PUT/DELETE /admin/orgs) — JWT + whitelist A =====
-	adminOrgs := api.Group("/admin/orgs", middleware.JWTAuth(jwtVerifier, nil, log), middleware.RequireUsers("oas-ou-admin", "oas-au-admin", "oas-oam-admin"), middleware.DomainFilter())
+	// ===== Organization Management (GET/POST/PUT/DELETE /admin/orgs) — JWT + whitelist A + XAM roles =====
+	adminOrgs := api.Group("/admin/orgs", middleware.JWTAuth(jwtVerifier, nil, log), func(c *gin.Context) {
+		username, _ := c.Get("username")
+		rolesRaw, _ := c.Get("roles")
+		var roles []string
+		if rolesRaw != nil {
+			if rolesStr, ok := rolesRaw.(string); ok && rolesStr != "" {
+				roles = strings.Split(rolesStr, ",")
+			}
+		}
+		if !canAccessOrgManagement(fmt.Sprintf("%v", username), roles) {
+			response.Forbidden(c, "access denied")
+			c.Abort()
+			return
+		}
+		c.Next()
+	}, middleware.DomainFilter())
 	{
 		// List organizations (with tree structure)
 		adminOrgs.GET("", func(c *gin.Context) {
@@ -1925,6 +1940,22 @@ func isInAdminWhitelistA(username string) bool {
 	return username == "oas-ou-admin" || username == "oas-au-admin" || username == "oas-oam-admin"
 }
 
+// canAccessOrgManagement checks if a user can access organization management.
+// Allowed: OU/AU/OAM admins (whitelist A) + XAM roles (TAM/HAM/YAM/VAM).
+func canAccessOrgManagement(username string, roles []string) bool {
+	// Whitelist A users always allowed
+	if isInAdminWhitelistA(username) {
+		return true
+	}
+	// XAM roles allowed (will be filtered by DomainFilter)
+	for _, role := range roles {
+		if role == "TAM" || role == "HAM" || role == "YAM" || role == "VAM" {
+			return true
+		}
+	}
+	return false
+}
+
 // seedTestUser creates a test user with bcrypt-hashed password if no users exist.
 // seedTestUsers creates test accounts based on product edition.
 // Beta edition: multiple test accounts with different roles (SU/AU/CU/GU)
@@ -1958,6 +1989,34 @@ func seedTestUsers(database *gorm.DB, log *zap.Logger, edition string) {
 	if suRole.ID == 0 {
 		suRole = OASRole{RoleCode: "SU", Name: "System User", Description: "System User role"}
 		database.Create(&suRole)
+	}
+
+	// Seed XAM 域管理角色（TAM/HAM/YAM/VAM）
+	xamRoles := []struct {
+		Code        string
+		Name        string
+		Description string
+		Permissions string
+	}{
+		{Code: "TAM", Name: "Technology Admin", Description: "技术域管理员", Permissions: `["tam:org:read","tam:org:manage","tam:member:read","tam:member:manage"]`},
+		{Code: "HAM", Name: "HR Admin", Description: "人资云管理员", Permissions: `["ham:org:read","ham:org:manage","ham:member:read","ham:member:manage"]`},
+		{Code: "YAM", Name: "Smart Plaza Admin", Description: "智场域管理员", Permissions: `["yam:org:read","yam:org:manage","yam:member:read","yam:member:manage"]`},
+		{Code: "VAM", Name: "Operations Admin", Description: "运营域管理员", Permissions: `["vam:org:read","vam:org:manage","vam:member:read","vam:member:manage"]`},
+	}
+	for _, xr := range xamRoles {
+		var existing OASRole
+		database.Where("role_code = ?", xr.Code).First(&existing)
+		if existing.ID == 0 {
+			role := OASRole{
+				RoleCode:    xr.Code,
+				Name:        xr.Name,
+				Description: xr.Description,
+				Permissions: xr.Permissions,
+			}
+			if err := database.Create(&role).Error; err == nil {
+				log.Info("XAM role created", zap.String("role_code", xr.Code))
+			}
+		}
 	}
 
 	// 创建管理员账号（如果不存在）
