@@ -373,6 +373,7 @@ func main() {
 			MSAccess:     []string{"ams", "cms", "dms", "hms", "fms", "tms", "ems", "gms", "oms", "vms", "ims", "sms"},
 			Roles:        roles,
 			ActiveRole:   activeRole,
+			Domain:       user.Domain,
 			TokenID:      fmt.Sprintf("tok-%d-%d", user.ID, now.Unix()),
 		}
 		token, ttl, err := jwtIssuer.IssueAccessToken(claims)
@@ -996,6 +997,7 @@ func main() {
 			MSAccess:     []string{"ams", "cms", "dms", "hms", "fms", "tms", "ems", "gms", "oms", "vms", "ims", "sms"},
 			Roles:        roles,
 			ActiveRole:   activeRole,
+			Domain:       user.Domain,
 			TokenID:      fmt.Sprintf("login-%d-%d", user.ID, now.Unix()),
 		}
 		token, ttl, err := jwtIssuer.IssueAccessToken(claims)
@@ -1077,6 +1079,7 @@ func main() {
 			DisplayName string   `json:"display_name"`
 			RoleCode    string   `json:"role_code" binding:"required"`
 			Roles       []string `json:"roles"`
+			Domain      string   `json:"domain"`
 		}
 		if err := c.ShouldBindJSON(&req); err != nil {
 			response.BadRequest(c, "username, password, role_code required")
@@ -1111,6 +1114,7 @@ func main() {
 			IdentityType: req.RoleCode,
 			EntityType:   "H",
 			Status:       "active",
+			Domain:       req.Domain,
 		}
 		if err := database.Create(&user).Error; err != nil {
 			response.BadRequest(c, "create user failed: "+err.Error())
