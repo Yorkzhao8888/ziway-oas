@@ -771,8 +771,38 @@ func main() {
 			response.Created(c, k)
 		})
 
-		// 审计日志 — 白名单 B (OU/AU) 全量 + XAM (T/H/Y/V) 本域 + OAM 不可读
-		admin.GET("/audit-logs", func(c *gin.Context) {
+		// 审计日志路由组 — 白名单 A + XAM 角色放行，handler 内再做细粒度检查
+	adminAuditLogs := api.Group("/admin/audit-logs", middleware.JWTAuth(jwtVerifier, nil, log), func(c *gin.Context) {
+		username, _ := c.Get("username")
+		rolesRaw, _ := c.Get("roles")
+		var roles []string
+		if rolesRaw != nil {
+			if rolesSlice, ok := rolesRaw.([]string); ok {
+				roles = rolesSlice
+			} else if rolesStr, ok := rolesRaw.(string); ok && rolesStr != "" {
+				roles = strings.Split(rolesStr, ",")
+			}
+		}
+		
+		isWhitelistA := isInAdminWhitelistA(username.(string))
+		isXAM := false
+		for _, role := range roles {
+			if role == "TAM" || role == "HAM" || role == "YAM" || role == "VAM" {
+				isXAM = true
+				break
+			}
+		}
+		
+		if !isWhitelistA && !isXAM {
+			response.Forbidden(c, "access denied")
+			c.Abort()
+			return
+		}
+		c.Next()
+	})
+	
+	// 审计日志 — 白名单 B (OU/AU) 全量 + XAM (T/H/Y/V) 本域 + OAM 不可读
+	adminAuditLogs.GET("", func(c *gin.Context) {
 			username, _ := c.Get("username")
 			rolesRaw, _ := c.Get("roles")
 			var roles []string
