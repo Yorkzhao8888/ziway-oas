@@ -1082,6 +1082,7 @@ func main() {
 			IP:          c.ClientIP(),
 			UserAgent:   c.Request.UserAgent(),
 			Environment: oasEnv.String(),
+			Domain:      user.Domain,
 		})
 		response.OK(c, gin.H{
 			"access_token": token,
@@ -1542,13 +1543,16 @@ func main() {
 				return
 			}
 			operator, _ := c.Get("user_id")
+			domain, _ := c.Get("domain")
 			database.Create(&AuditLog{
-				Plane:      "admin",
-				Action:     "org.create",
-				UserID:     fmt.Sprintf("%v", operator),
-				ResourceID: fmt.Sprintf("org-%d", org.ID),
-				Detail:     fmt.Sprintf("code=%s, name=%s, domain=%s", org.Code, org.Name, org.Domain),
-				IP:         c.ClientIP(),
+				Plane:       "admin",
+				Action:      "org.create",
+				UserID:      fmt.Sprintf("%v", operator),
+				ResourceID:  fmt.Sprintf("org-%d", org.ID),
+				Detail:      fmt.Sprintf("code=%s, name=%s, domain=%s", org.Code, org.Name, org.Domain),
+				IP:          c.ClientIP(),
+				Environment: oasEnv.String(),
+				Domain:      fmt.Sprintf("%v", domain),
 			})
 			response.Created(c, org)
 		})
@@ -1593,13 +1597,16 @@ func main() {
 				return
 			}
 			operator, _ := c.Get("user_id")
+			domain, _ := c.Get("domain")
 			database.Create(&AuditLog{
-				Plane:      "admin",
-				Action:     "org.update",
-				UserID:     fmt.Sprintf("%v", operator),
-				ResourceID: fmt.Sprintf("org-%d", org.ID),
-				Detail:     fmt.Sprintf("updates=%v", updates),
-				IP:         c.ClientIP(),
+				Plane:       "admin",
+				Action:      "org.update",
+				UserID:      fmt.Sprintf("%v", operator),
+				ResourceID:  fmt.Sprintf("org-%d", org.ID),
+				Detail:      fmt.Sprintf("updates=%v", updates),
+				IP:          c.ClientIP(),
+				Environment: oasEnv.String(),
+				Domain:      fmt.Sprintf("%v", domain),
 			})
 			response.OK(c, org)
 		})
@@ -1631,13 +1638,16 @@ func main() {
 				return
 			}
 			operator, _ := c.Get("user_id")
+			domain, _ := c.Get("domain")
 			database.Create(&AuditLog{
-				Plane:      "admin",
-				Action:     "org.delete",
-				UserID:     fmt.Sprintf("%v", operator),
-				ResourceID: fmt.Sprintf("org-%d", org.ID),
-				Detail:     fmt.Sprintf("code=%s", org.Code),
-				IP:         c.ClientIP(),
+				Plane:       "admin",
+				Action:      "org.delete",
+				UserID:      fmt.Sprintf("%v", operator),
+				ResourceID:  fmt.Sprintf("org-%d", org.ID),
+				Detail:      fmt.Sprintf("code=%s", org.Code),
+				IP:          c.ClientIP(),
+				Environment: oasEnv.String(),
+				Domain:      fmt.Sprintf("%v", domain),
 			})
 			response.OK(c, gin.H{"message": "org deleted"})
 		})
@@ -1710,13 +1720,16 @@ func main() {
 				return
 			}
 			operator, _ := c.Get("user_id")
+			domain, _ := c.Get("domain")
 			database.Create(&AuditLog{
-				Plane:      "admin",
-				Action:     "org.member.add",
-				UserID:     fmt.Sprintf("%v", operator),
-				ResourceID: fmt.Sprintf("org-%d", org.ID),
-				Detail:     fmt.Sprintf("user_id=%d, role=%s", req.UserID, req.Role),
-				IP:         c.ClientIP(),
+				Plane:       "admin",
+				Action:      "org.member.add",
+				UserID:      fmt.Sprintf("%v", operator),
+				ResourceID:  fmt.Sprintf("org-%d", org.ID),
+				Detail:      fmt.Sprintf("user_id=%d, role=%s", req.UserID, req.Role),
+				IP:          c.ClientIP(),
+				Environment: oasEnv.String(),
+				Domain:      fmt.Sprintf("%v", domain),
 			})
 			response.Created(c, member)
 		})
@@ -1747,13 +1760,16 @@ func main() {
 				return
 			}
 			operator, _ := c.Get("user_id")
+			domain, _ := c.Get("domain")
 			database.Create(&AuditLog{
-				Plane:      "admin",
-				Action:     "org.member.remove",
-				UserID:     fmt.Sprintf("%v", operator),
-				ResourceID: fmt.Sprintf("org-%d", org.ID),
-				Detail:     fmt.Sprintf("user_id=%d", userId),
-				IP:         c.ClientIP(),
+				Plane:       "admin",
+				Action:      "org.member.remove",
+				UserID:      fmt.Sprintf("%v", operator),
+				ResourceID:  fmt.Sprintf("org-%d", org.ID),
+				Detail:      fmt.Sprintf("user_id=%d", userId),
+				IP:          c.ClientIP(),
+				Environment: oasEnv.String(),
+				Domain:      fmt.Sprintf("%v", domain),
 			})
 			response.OK(c, gin.H{"message": "member removed"})
 		})
