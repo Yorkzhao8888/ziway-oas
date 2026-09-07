@@ -755,11 +755,32 @@ func main() {
 				Domain string `json:"domain"`
 				Count  int64  `json:"count"`
 			}
-			var domainDistribution []DomainCount
+			// 初始化全域 0 计数
+			domainDistribution := []DomainCount{
+				{Domain: "T", Count: 0},
+				{Domain: "H", Count: 0},
+				{Domain: "Y", Count: 0},
+				{Domain: "V", Count: 0},
+				{Domain: "O", Count: 0},
+				{Domain: "A", Count: 0},
+				{Domain: "F", Count: 0},
+				{Domain: "G", Count: 0},
+			}
+			// 查询实际分布并更新
+			var actualDistribution []DomainCount
 			database.Model(&model.Organization{}).
 				Select("domain, COUNT(*) as count").
 				Group("domain").
-				Scan(&domainDistribution)
+				Scan(&actualDistribution)
+			// 更新有数据的域
+			for _, actual := range actualDistribution {
+				for i := range domainDistribution {
+					if domainDistribution[i].Domain == actual.Domain {
+						domainDistribution[i].Count = actual.Count
+						break
+					}
+				}
+			}
 			
 			// 审计摘要（仅 2admin 可见明细，OAM 只返回统计）
 			isOUAU := username == "oas-ou-admin" || username == "oas-au-admin"
@@ -1048,6 +1069,53 @@ func main() {
 			response.OK(c, approval)
 		})
 
+		// 删除审批单（仅 OU/AU）
+		admin.DELETE("/approvals/:id", func(c *gin.Context) {
+			username, _ := c.Get("username")
+			domain, _ := c.Get("domain")
+			oasEnv, _ := c.Get("oas_env")
+			
+			// 类型断言
+			usernameStr, _ := username.(string)
+			domainStr, _ := domain.(string)
+			oasEnvStr, _ := oasEnv.(string)
+			
+			// 仅 OU/AU 可删除
+			if usernameStr != "oas-ou-admin" && usernameStr != "oas-au-admin" {
+				response.Forbidden(c, "only OU/AU admin can delete approvals")
+				return
+			}
+			
+			id, _ := parseUint(c.Param("id"))
+			var approval ApprovalRequest
+			if err := database.First(&approval, id).Error; err != nil {
+				response.NotFound(c, "approval not found")
+				return
+			}
+			
+			if err := database.Delete(&approval).Error; err != nil {
+				response.InternalError(c, "delete failed: "+err.Error())
+				return
+			}
+			
+			// 审计日志
+			database.Create(&AuditLog{
+				UserID:      usernameStr,
+				UserName:    usernameStr,
+				Plane:       "admin",
+				Action:      "governance.approval.delete",
+				Resource:    "approval_request",
+				ResourceID:  fmt.Sprintf("%d", approval.ID),
+				Detail:      fmt.Sprintf("title=%s, status=%s", approval.Title, approval.Status),
+				IP:          c.ClientIP(),
+				UserAgent:   c.Request.UserAgent(),
+				Environment: oasEnvStr,
+				Domain:      domainStr,
+			})
+			
+			response.OK(c, gin.H{"message": "approval deleted"})
+		})
+
 		// ===== 所有权视图 (/admin/ownership) =====
 		admin.GET("/ownership/matrix", func(c *gin.Context) {
 			// 获取域注册信息
@@ -1109,7 +1177,7 @@ func main() {
 					{"domain": "Y", "name": "智场域", "owner": "YAM", "description": "智场运营"},
 					{"domain": "V", "name": "经营域", "owner": "VAM", "description": "经营分析"},
 					{"domain": "O", "name": "组织域", "owner": "OAM", "description": "组织管理"},
-					{"domain": "A", "name": "行政域", "owner": "AAM", "description": "行政管理"},
+					{"domain": "A", "name": "行政域", "owner": "AU-admin", "description": "行政管理"},
 					{"domain": "F", "name": "财务域", "owner": "FAM", "description": "财务管理"},
 					{"domain": "G", "name": "商务域", "owner": "GAM", "description": "商务管理"},
 				}
@@ -4044,7 +4112,7 @@ func orgMgmtPageHTML() string {
 				<option value="H">H - 人资域 (HAM)</option>
 				<option value="Y">Y - 智场域 (YAM)</option>
 				<option value="O">O - 经营域 (OAM)</option>
-				<option value="A">A - 行政域 (AAM)</option>
+				<option value="A">A - 行政域 (AU-admin)</option>
 				<option value="F">F - 财务域 (FAM)</option>
 				<option value="V">V - 商务域 (VAM)</option>
 				<option value="G">G - 治理域 (GAM)</option>
