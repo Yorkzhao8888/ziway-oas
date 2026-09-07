@@ -2841,8 +2841,29 @@ func main() {
 	adminUsers := api.Group("/admin")
 	if jwtVerifier != nil {
 		adminUsers.Use(middleware.JWTAuth(jwtVerifier, nil, log))
-		// 白名单 A：系统管理访问（/admin/*）= OU-admin + AU-admin + OAM
-		adminUsers.Use(middleware.RequireUsers("oas-ou-admin", "oas-au-admin", "oas-oam-admin"))
+		// 白名单 A：系统管理访问（/admin/*）= SU/OU/AU/OAM
+		adminUsers.Use(func(c *gin.Context) {
+			username, _ := c.Get("username")
+			roleCode, _ := c.Get("role_code")
+			// API Key 视为 admin 级别
+			if strings.HasPrefix(fmt.Sprintf("%v", username), "api-key:") {
+				c.Next()
+				return
+			}
+			// 查询用户 role_code
+			var user OASUser
+			if database.Where("username = ?", username).First(&user).Error == nil && user.RoleCode != "" {
+				roleCode = user.RoleCode
+			}
+			rc := fmt.Sprintf("%v", roleCode)
+			if rc == "SU" || rc == "OU" || rc == "AU" || rc == "OAM" {
+				c.Set("role_code", rc)
+				c.Next()
+				return
+			}
+			response.Forbidden(c, "access denied")
+			c.Abort()
+		})
 	}
 	adminUsers.GET("/users", func(c *gin.Context) {
 		type UserVO struct {
@@ -3944,6 +3965,13 @@ func seedTestUsers(database *gorm.DB, log *zap.Logger, edition string) {
 	for _, acc := range adminAccounts {
 		var existing OASUser
 		database.Where("username = ?", acc.Username).First(&existing)
+		// 找到对应的角色
+		var targetRole OASRole
+		database.Where("role_code = ?", acc.RoleCode).First(&targetRole)
+		if targetRole.ID == 0 {
+			log.Error("role not found for admin account", zap.String("username", acc.Username), zap.String("role_code", acc.RoleCode))
+			continue
+		}
 		if existing.ID == 0 {
 			user := OASUser{
 				UserCode:     acc.UserCode,
@@ -3953,11 +3981,25 @@ func seedTestUsers(database *gorm.DB, log *zap.Logger, edition string) {
 				IdentityType: acc.IdentityType,
 				EntityType:   "H",
 				Status:       "active",
+				RoleCode:     acc.RoleCode,
 			}
 			if err := database.Create(&user).Error; err == nil {
-				assignment := OASUserRole{UserID: user.ID, RoleID: suRole.ID, GrantedBy: "system-seed", GrantedAt: time.Now()}
+				assignment := OASUserRole{UserID: user.ID, RoleID: targetRole.ID, GrantedBy: "system-seed", GrantedAt: time.Now()}
 				database.Table("user_roles").Create(&assignment)
-				log.Info("admin user created", zap.String("username", acc.Username))
+				log.Info("admin user created", zap.String("username", acc.Username), zap.String("role_code", acc.RoleCode))
+			}
+		} else {
+			// 更新现有用户的 role_code 和 user_roles
+			if existing.RoleCode != acc.RoleCode {
+				database.Model(&existing).Update("role_code", acc.RoleCode)
+				log.Info("admin user role_code updated", zap.String("username", acc.Username), zap.String("role_code", acc.RoleCode))
+			}
+			// 更新 user_roles 表
+			var existingAssignment OASUserRole
+			database.Where("user_id = ?", existing.ID).First(&existingAssignment)
+			if existingAssignment.RoleID != targetRole.ID {
+				database.Model(&existingAssignment).Update("role_id", targetRole.ID)
+				log.Info("admin user role updated", zap.String("username", acc.Username), zap.Uint64("role_id", targetRole.ID))
 			}
 		}
 	}
