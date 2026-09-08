@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"go.uber.org/zap"
+	oasmodel "ziway/backend/internal/oas/model"
 	"ziway/backend/pkg/envpolicy"
 	"ziway/backend/pkg/model"
 	"ziway/backend/pkg/password"
@@ -39,221 +40,7 @@ func hashSecret(secret string) string {
 
 // ========== OAS Models (Owner + Admin shared) ==========
 
-// SystemConfig 系统配置项
-type SystemConfig struct {
-	ID        uint64         `gorm:"primarykey" json:"id"`
-	Key       string         `gorm:"uniqueIndex;size:128" json:"key"`
-	Value     string         `gorm:"type:text" json:"value"`
-	Category  string         `gorm:"size:64;index" json:"category"`
-	Encrypted bool           `gorm:"default:false" json:"encrypted"`
-	UpdatedBy string         `gorm:"size:32" json:"updated_by"`
-	CreatedAt time.Time      `json:"created_at"`
-	UpdatedAt time.Time      `json:"updated_at"`
-	DeletedAt gorm.DeletedAt `gorm:"index" json:"-"`
-}
-
-// AuditLog 审计日志（不可篡改）
-type AuditLog struct {
-	ID          uint64    `gorm:"primarykey" json:"id"`
-	UserID      string    `gorm:"index;size:32" json:"user_id"`
-	UserName    string    `gorm:"size:64" json:"user_name"`
-	Plane       string    `gorm:"size:16;index" json:"plane"` // owner / admin
-	Action      string    `gorm:"size:64;index" json:"action"`
-	Resource    string    `gorm:"size:128" json:"resource"`
-	ResourceID  string    `gorm:"size:32" json:"resource_id"`
-	Detail      string    `gorm:"type:text" json:"detail"`
-	IP          string    `gorm:"size:64" json:"ip"`
-	UserAgent   string    `gorm:"size:256" json:"user_agent"`
-	Environment string    `gorm:"size:16;index" json:"environment"` // DEV/BETA/RC/PROD
-	Domain      string    `gorm:"size:8;index" json:"domain"`       // T/H/Y/V/O/A/F/G for XAM filtering
-	CreatedAt   time.Time `json:"created_at" json:"created_at"`
-}
-
-// DomainRegistry 事业场生命周期管理（Owner Plane）
-type DomainRegistry struct {
-	ID          uint64         `gorm:"primarykey" json:"id"`
-	DomainCode  string         `gorm:"uniqueIndex;size:32" json:"domain_code"`
-	DomainName  string         `gorm:"size:128" json:"domain_name"`
-	BOSName     string         `gorm:"size:32;index" json:"bos_name"` // cos/dos/...
-	Status      string         `gorm:"size:16;default:active;index" json:"status"`
-	OwnerUserID string         `gorm:"size:32" json:"owner_user_id"`
-	Config      string         `gorm:"type:text" json:"config"`
-	CreatedAt   time.Time      `json:"created_at"`
-	UpdatedAt   time.Time      `json:"updated_at"`
-	DeletedAt   gorm.DeletedAt `gorm:"index" json:"-"`
-}
-
-// GovernancePolicy 治理策略（Owner Plane）
-type GovernancePolicy struct {
-	ID          uint64         `gorm:"primarykey" json:"id"`
-	PolicyCode  string         `gorm:"uniqueIndex;size:32" json:"policy_code"`
-	Title       string         `gorm:"size:128" json:"title"`
-	Category    string         `gorm:"size:64;index" json:"category"`
-	Content     string         `gorm:"type:text" json:"content"`
-	Status      string         `gorm:"size:16;default:active" json:"status"`
-	ApprovedBy  string         `gorm:"size:32" json:"approved_by"`
-	EffectiveAt *time.Time     `json:"effective_at,omitempty"`
-	CreatedAt   time.Time      `json:"created_at"`
-	UpdatedAt   time.Time      `json:"updated_at"`
-	DeletedAt   gorm.DeletedAt `gorm:"index" json:"-"`
-}
-
-// ServiceRegistry 服务注册（Admin Plane）
-type ServiceRegistry struct {
-	ID           uint64         `gorm:"primarykey" json:"id"`
-	ServiceName  string         `gorm:"uniqueIndex;size:64" json:"service_name"`
-	ServiceType  string         `gorm:"size:32" json:"service_type"` // mbs/bos/oas/app
-	Version      string         `gorm:"size:16" json:"version"`
-	Endpoint     string         `gorm:"size:256" json:"endpoint"`
-	HealthCheck  string         `gorm:"size:256" json:"health_check"`
-	Status       string         `gorm:"size:16;default:healthy" json:"status"`
-	Metadata     string         `gorm:"type:text" json:"metadata"`
-	RegisteredAt time.Time      `json:"registered_at"`
-	LastSeenAt   *time.Time     `json:"last_seen_at,omitempty"`
-	CreatedAt    time.Time      `json:"created_at"`
-	UpdatedAt    time.Time      `json:"updated_at"`
-	DeletedAt    gorm.DeletedAt `gorm:"index" json:"-"`
-}
-
-// APIKey 密钥管理（Admin Plane）
-type APIKey struct {
-	ID        uint64         `gorm:"primarykey" json:"id"`
-	KeyName   string         `gorm:"size:64" json:"key_name"`
-	KeyPrefix string         `gorm:"uniqueIndex;size:16" json:"key_prefix"`
-	KeyHash   string         `gorm:"size:128" json:"-"`
-	Scopes    string         `gorm:"type:text" json:"scopes"`
-	ExpiresAt *time.Time     `json:"expires_at,omitempty"`
-	Status    string         `gorm:"size:16;default:active" json:"status"`
-	CreatedBy string         `gorm:"size:32" json:"created_by"`
-	CreatedAt time.Time      `json:"created_at"`
-	UpdatedAt time.Time      `json:"updated_at"`
-	DeletedAt gorm.DeletedAt `gorm:"index" json:"-"`
-}
-
-// FederationNode 联邦节点管理（2b-3）
-type FederationNode struct {
-	ID           uint64         `gorm:"primarykey" json:"id"`
-	NodeName     string         `gorm:"size:64" json:"node_name"`
-	NodeID       string         `gorm:"uniqueIndex;size:64" json:"node_id"`
-	TrustLevel   string         `gorm:"size:16;default:basic" json:"trust_level"` // basic/standard/full
-	Status       string         `gorm:"size:16;default:active" json:"status"`     // active/inactive/suspended
-	PublicKey    string         `gorm:"type:text" json:"public_key"`
-	Endpoint     string         `gorm:"size:256" json:"endpoint"`
-	Capabilities string         `gorm:"type:text" json:"capabilities"`
-	CreatedBy    string         `gorm:"size:32" json:"created_by"`
-	CreatedAt    time.Time      `json:"created_at"`
-	UpdatedAt    time.Time      `json:"updated_at"`
-	DeletedAt    gorm.DeletedAt `gorm:"index" json:"-"`
-}
-
-// OAuthClient OAuth 客户端注册（OAS-CONSOLE-06）
-type OAuthClient struct {
-	ID           uint64         `gorm:"primarykey" json:"id"`
-	ClientID     string         `gorm:"uniqueIndex;size:64" json:"client_id"`
-	ClientName   string         `gorm:"size:128" json:"client_name"`
-	ClientSecret string         `gorm:"size:128" json:"-"`                    // bcrypt hashed
-	RedirectURI  string         `gorm:"type:text" json:"redirect_uri"`        // comma-separated
-	Scopes       string         `gorm:"type:text" json:"scopes"`              // comma-separated
-	Status       string         `gorm:"size:16;default:active" json:"status"` // active/inactive
-	CreatedBy    string         `gorm:"size:32" json:"created_by"`
-	CreatedAt    time.Time      `json:"created_at"`
-	UpdatedAt    time.Time      `json:"updated_at"`
-	DeletedAt    gorm.DeletedAt `gorm:"index" json:"-"`
-}
-
-// OAuthAuthorizationCode 授权码（OAS-CONSOLE-06）
-type OAuthAuthorizationCode struct {
-	ID          uint64    `gorm:"primarykey" json:"id"`
-	Code        string    `gorm:"uniqueIndex;size:64" json:"code"`
-	ClientID    string    `gorm:"size:64;index" json:"client_id"`
-	UserID      string    `gorm:"size:32;index" json:"user_id"`
-	RedirectURI string    `gorm:"size:512" json:"redirect_uri"`
-	Scopes      string    `gorm:"type:text" json:"scopes"`
-	ExpiresAt   time.Time `json:"expires_at"`
-	Used        bool      `gorm:"default:false" json:"used"`
-	CreatedAt   time.Time `json:"created_at"`
-}
-
-// RBACPolicy OAS 权威源 — 唯一 RBAC 策略存储。
-// PolicyType 固定为 "rbac"；OAS 为策略唯一写入点，变更后同步 CSV 供 OS 加载。
-type RBACPolicy struct {
-	ID         uint64         `gorm:"primarykey" json:"id"`
-	PolicyType string         `gorm:"size:16;default:rbac;index" json:"policy_type"`
-	Subject    string         `gorm:"size:64;index" json:"subject"`
-	Resource   string         `gorm:"size:256" json:"resource"`
-	Action     string         `gorm:"size:16" json:"action"`
-	Effect     string         `gorm:"size:16;default:allow" json:"effect"`
-	Domain     string         `gorm:"size:32;index" json:"domain"`
-	RoleType   string         `gorm:"size:16" json:"role_type"`
-	Version    string         `gorm:"size:32" json:"version"`
-	Status     string         `gorm:"size:16;default:active;index" json:"status"`
-	CreatedBy  string         `gorm:"size:32" json:"created_by"`
-	CreatedAt  time.Time      `json:"created_at"`
-	UpdatedAt  time.Time      `json:"updated_at"`
-	DeletedAt  gorm.DeletedAt `gorm:"index" json:"-"`
-}
-
-// OASUser OAS 侧最小用户模型（与 AMS User 共享同一 DB 表）。
-type OASUser struct {
-	ID           uint64         `gorm:"primarykey" json:"id"`
-	UserCode     string         `gorm:"uniqueIndex;size:32" json:"user_code"`
-	Username     string         `gorm:"uniqueIndex;size:64" json:"username"`
-	PasswordHash string         `gorm:"size:128" json:"-"`
-	DisplayName  string         `gorm:"size:64" json:"display_name"`
-	RoleCode     string         `gorm:"size:16;index" json:"role_code"`
-	IdentityType string         `gorm:"size:16;index" json:"identity_type"`
-	EntityType   string         `gorm:"size:8" json:"entity_type"`
-	Domain       string         `gorm:"size:8;index" json:"domain,omitempty"`
-	Status       string         `gorm:"size:16;default:active" json:"status"`
-	LastLoginAt  *time.Time     `json:"last_login_at,omitempty"`
-	CreatedAt    time.Time      `json:"created_at"`
-	UpdatedAt    time.Time      `json:"updated_at"`
-	DeletedAt    gorm.DeletedAt `gorm:"index" json:"-"`
-}
-
-// ApprovalRequest 战略审批单（L0 治理层）
-type ApprovalRequest struct {
-	ID          uint64     `gorm:"primarykey" json:"id"`
-	Title       string     `gorm:"size:200;not null" json:"title"`
-	Description string     `gorm:"type:text" json:"description"`
-	Type        string     `gorm:"size:50;not null;index" json:"type"`                   // high_privilege/org_delete/key_operation/federation
-	Status      string     `gorm:"size:20;not null;default:pending;index" json:"status"` // pending/approved/rejected/executed
-	RequesterID string     `gorm:"size:64;not null;index" json:"requester_id"`           // 业务编码（如 XHPZ#OU-ADMIN）
-	ApproverID  *string    `gorm:"size:64" json:"approver_id"`                           // 业务编码
-	CreatedAt   time.Time  `json:"created_at"`
-	UpdatedAt   time.Time  `json:"updated_at"`
-	ApprovedAt  *time.Time `json:"approved_at"`
-	ExecutedAt  *time.Time `json:"executed_at"`
-	Notes       string     `gorm:"type:text" json:"notes"`
-	Domain      string     `gorm:"size:8;index" json:"domain"`
-	Environment string     `gorm:"size:20" json:"environment"`
-}
-
-func (OASUser) TableName() string { return "users" }
-
-// OASRole / OASUserRole — 与 AMS 共享同一 DB 表。
-type OASRole struct {
-	ID          uint64 `gorm:"primarykey"`
-	RoleCode    string `gorm:"uniqueIndex;size:32"`
-	Name        string `gorm:"size:64"`
-	Description string `gorm:"size:256"`
-	Permissions string `gorm:"type:text"`
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
-	DeletedAt   gorm.DeletedAt `gorm:"index"`
-}
-
-func (OASRole) TableName() string { return "roles" }
-
-type OASUserRole struct {
-	ID        uint64 `gorm:"primarykey"`
-	UserID    uint64 `gorm:"index:idx_user_role,unique"`
-	RoleID    uint64 `gorm:"index:idx_user_role,unique"`
-	GrantedBy string `gorm:"size:32"`
-	GrantedAt time.Time
-}
-
-func (OASUserRole) TableName() string { return "user_roles" }
+// oasmodel.SystemConfig 系统配置项
 
 func main() {
 	v, err := config.Load()
@@ -278,19 +65,19 @@ func main() {
 		log.Fatal("init db", zap.Error(err))
 	}
 	database.AutoMigrate(
-		&SystemConfig{}, &AuditLog{}, &DomainRegistry{},
-		&GovernancePolicy{}, &ServiceRegistry{}, &APIKey{},
-		&FederationNode{}, &RBACPolicy{}, &OASUser{}, &OASRole{}, &OASUserRole{},
+		&oasmodel.SystemConfig{}, &oasmodel.AuditLog{}, &oasmodel.DomainRegistry{},
+		&oasmodel.GovernancePolicy{}, &oasmodel.ServiceRegistry{}, &oasmodel.APIKey{},
+		&oasmodel.FederationNode{}, &oasmodel.RBACPolicy{}, &oasmodel.OASUser{}, &oasmodel.OASRole{}, &oasmodel.OASUserRole{},
 		&model.Organization{}, &model.UserOrganization{},
-		&ApprovalRequest{},
-		&OAuthClient{}, &OAuthAuthorizationCode{},
+		&oasmodel.ApprovalRequest{},
+		&oasmodel.OAuthClient{}, &oasmodel.OAuthAuthorizationCode{},
 	)
 
 	// Migrate existing admin accounts to have proper role_code
 	// 迁移现有 admin 账号的 role_code（如果为空）
-	database.Model(&OASUser{}).Where("username = ? AND (role_code = '' OR role_code IS NULL)", "oas-ou-admin").Update("role_code", "SU")
-	database.Model(&OASUser{}).Where("username = ? AND (role_code = '' OR role_code IS NULL)", "oas-au-admin").Update("role_code", "AU")
-	database.Model(&OASUser{}).Where("username = ? AND (role_code = '' OR role_code IS NULL)", "oas-oam-admin").Update("role_code", "OAM")
+	database.Model(&oasmodel.OASUser{}).Where("username = ? AND (role_code = '' OR role_code IS NULL)", "oas-ou-admin").Update("role_code", "SU")
+	database.Model(&oasmodel.OASUser{}).Where("username = ? AND (role_code = '' OR role_code IS NULL)", "oas-au-admin").Update("role_code", "AU")
+	database.Model(&oasmodel.OASUser{}).Where("username = ? AND (role_code = '' OR role_code IS NULL)", "oas-oam-admin").Update("role_code", "OAM")
 
 	// Login rate limiter: 5 failures = 15 min lockout
 	loginLimiter := ratelimit.NewLoginLimiter(5, 15*time.Minute)
@@ -414,7 +201,7 @@ func main() {
 			return
 		}
 		// Look up user from shared users table
-		var user OASUser
+		var user oasmodel.OASUser
 		if err := database.Where("username = ?", req.Username).First(&user).Error; err != nil {
 			loginLimiter.RecordFailure(clientIP, req.Username)
 			response.Unauthorized(c, "invalid credentials")
@@ -471,7 +258,7 @@ func main() {
 			return
 		}
 		// Audit log: token issued
-		database.Create(&AuditLog{
+		database.Create(&oasmodel.AuditLog{
 			UserID:      user.UserCode,
 			UserName:    user.DisplayName,
 			Plane:       "admin",
@@ -523,7 +310,7 @@ func main() {
 			}
 
 			// Find user by role or username
-			var user OASUser
+			var user oasmodel.OASUser
 			if req.Username != "" {
 				if err := database.Where("username = ?", req.Username).First(&user).Error; err != nil {
 					response.NotFound(c, "test user not found")
@@ -585,7 +372,7 @@ func main() {
 			}
 
 			// Audit log
-			database.Create(&AuditLog{
+			database.Create(&oasmodel.AuditLog{
 				UserID:      user.UserCode,
 				UserName:    user.DisplayName,
 				Plane:       "admin",
@@ -664,7 +451,7 @@ func main() {
 			}
 
 			// Find user by role or username
-			var user OASUser
+			var user oasmodel.OASUser
 			if req.Username != "" {
 				if err := database.Where("username = ?", req.Username).First(&user).Error; err != nil {
 					response.NotFound(c, "user not found")
@@ -723,7 +510,7 @@ func main() {
 			expiresAt := now.Add(ttl)
 
 			// Audit log
-			database.Create(&AuditLog{
+			database.Create(&oasmodel.AuditLog{
 				UserID:      user.UserCode,
 				UserName:    user.DisplayName,
 				Plane:       "admin",
@@ -760,7 +547,7 @@ func main() {
 			}
 
 			// Validate client
-			var client OAuthClient
+			var client oasmodel.OAuthClient
 			if err := database.Where("client_id = ? AND status = ?", req.ClientID, "active").First(&client).Error; err != nil {
 				response.BadRequest(c, "invalid client_id")
 				return
@@ -791,7 +578,7 @@ func main() {
 				response.InternalError(c, "invalid user_id in context")
 				return
 			}
-			var user OASUser
+			var user oasmodel.OASUser
 			if err := database.Where("user_code = ?", userID).First(&user).Error; err != nil {
 				response.InternalError(c, "user not found")
 				return
@@ -799,7 +586,7 @@ func main() {
 
 			// Generate authorization code
 			code := fmt.Sprintf("auth_%d_%d", user.ID, time.Now().UnixNano())
-			authCode := OAuthAuthorizationCode{
+			authCode := oasmodel.OAuthAuthorizationCode{
 				Code:        code,
 				ClientID:    req.ClientID,
 				UserID:      user.UserCode,
@@ -814,7 +601,7 @@ func main() {
 			}
 
 			// Audit log
-			database.Create(&AuditLog{
+			database.Create(&oasmodel.AuditLog{
 				UserID:      user.UserCode,
 				UserName:    user.DisplayName,
 				Plane:       "admin",
@@ -838,12 +625,12 @@ func main() {
 	{
 		// 事业场生命周期
 		owner.GET("/domains", func(c *gin.Context) {
-			var items []DomainRegistry
+			var items []oasmodel.DomainRegistry
 			database.Order("created_at DESC").Find(&items)
 			response.OK(c, items)
 		})
 		owner.POST("/domains", func(c *gin.Context) {
-			var d DomainRegistry
+			var d oasmodel.DomainRegistry
 			if err := c.ShouldBindJSON(&d); err != nil {
 				response.BadRequest(c, "invalid request")
 				return
@@ -856,18 +643,18 @@ func main() {
 				Status string `json:"status"`
 			}
 			c.ShouldBindJSON(&body)
-			database.Model(&DomainRegistry{}).Where("id = ?", c.Param("id")).Update("status", body.Status)
+			database.Model(&oasmodel.DomainRegistry{}).Where("id = ?", c.Param("id")).Update("status", body.Status)
 			response.OK(c, nil)
 		})
 
 		// 治理策略
 		owner.GET("/policies", func(c *gin.Context) {
-			var items []GovernancePolicy
+			var items []oasmodel.GovernancePolicy
 			database.Order("created_at DESC").Find(&items)
 			response.OK(c, items)
 		})
 		owner.POST("/policies", func(c *gin.Context) {
-			var p GovernancePolicy
+			var p oasmodel.GovernancePolicy
 			if err := c.ShouldBindJSON(&p); err != nil {
 				response.BadRequest(c, "invalid request")
 				return
@@ -876,7 +663,7 @@ func main() {
 			response.Created(c, p)
 		})
 		owner.PUT("/policies/:id", func(c *gin.Context) {
-			var p GovernancePolicy
+			var p oasmodel.GovernancePolicy
 			if err := database.First(&p, c.Param("id")).Error; err != nil {
 				response.NotFound(c, "policy not found")
 				return
@@ -891,10 +678,10 @@ func main() {
 	// OAuth client registration (seed default clients for BETA/DEV)
 	if envpolicy.IsQuickLoginEnabled(oasEnv) {
 		var clientCount int64
-		database.Model(&OAuthClient{}).Count(&clientCount)
+		database.Model(&oasmodel.OAuthClient{}).Count(&clientCount)
 		if clientCount == 0 {
 			// Seed default OAuth clients for testing
-			defaultClients := []OAuthClient{
+			defaultClients := []oasmodel.OAuthClient{
 				{
 					ClientID:     "oas-console",
 					ClientName:   "OAS Console",
@@ -983,7 +770,7 @@ func main() {
 		}
 
 		// Validate client
-		var client OAuthClient
+		var client oasmodel.OAuthClient
 		if err := database.Where("client_id = ? AND status = ?", clientID, "active").First(&client).Error; err != nil {
 			response.BadRequest(c, "invalid client_id")
 			return
@@ -1029,7 +816,7 @@ func main() {
 		redirectURI := c.PostForm("redirect_uri")
 
 		// Validate client
-		var client OAuthClient
+		var client oasmodel.OAuthClient
 		if err := database.Where("client_id = ? AND status = ?", clientID, "active").First(&client).Error; err != nil {
 			response.Unauthorized(c, "invalid client")
 			return
@@ -1042,7 +829,7 @@ func main() {
 		}
 
 		// Validate authorization code
-		var authCode OAuthAuthorizationCode
+		var authCode oasmodel.OAuthAuthorizationCode
 		if err := database.Where("code = ? AND client_id = ? AND used = ?", code, clientID, false).First(&authCode).Error; err != nil {
 			response.BadRequest(c, "invalid or expired code")
 			return
@@ -1064,7 +851,7 @@ func main() {
 		database.Model(&authCode).Update("used", true)
 
 		// Get user
-		var user OASUser
+		var user oasmodel.OASUser
 		if err := database.Where("user_code = ?", authCode.UserID).First(&user).Error; err != nil {
 			response.InternalError(c, "user not found")
 			return
@@ -1114,7 +901,7 @@ func main() {
 		}
 
 		// Audit log
-		database.Create(&AuditLog{
+		database.Create(&oasmodel.AuditLog{
 			UserID:      user.UserCode,
 			UserName:    user.DisplayName,
 			Plane:       "admin",
@@ -1149,7 +936,7 @@ func main() {
 			response.InternalError(c, "invalid user_id in context")
 			return
 		}
-		var user OASUser
+		var user oasmodel.OASUser
 		if err := database.Where("user_code = ?", userID).First(&user).Error; err != nil {
 			response.NotFound(c, "user not found")
 			return
@@ -1198,7 +985,7 @@ func main() {
 				prefix := parts[0] + "_" + parts[1]
 
 				// Look up API key by prefix
-				var key APIKey
+				var key oasmodel.APIKey
 				if err := database.Where("key_prefix = ?", prefix).First(&key).Error; err == nil {
 					// Check status
 					if key.Status == "active" {
@@ -1239,7 +1026,7 @@ func main() {
 			return
 		}
 
-		var user OASUser
+		var user oasmodel.OASUser
 		if err := database.Where("username = ?", username).First(&user).Error; err != nil {
 			response.Unauthorized(c, "user not found")
 			return
@@ -1260,7 +1047,7 @@ func main() {
 
 			// 用户统计（仅 active）
 			var usersTotal int64
-			database.Model(&OASUser{}).Where("status = ?", "active").Count(&usersTotal)
+			database.Model(&oasmodel.OASUser{}).Where("status = ?", "active").Count(&usersTotal)
 
 			// 组织统计
 			var orgsTotal int64
@@ -1268,7 +1055,7 @@ func main() {
 
 			// 角色统计
 			var rolesTotal int64
-			database.Model(&OASRole{}).Count(&rolesTotal)
+			database.Model(&oasmodel.OASRole{}).Count(&rolesTotal)
 
 			// 域分布（基于 organizations）
 			type DomainCount struct {
@@ -1314,7 +1101,7 @@ func main() {
 
 			if isOUAU {
 				// 2admin 可见审计明细
-				var recentAudits []AuditLog
+				var recentAudits []oasmodel.AuditLog
 				database.Order("created_at DESC").Limit(10).Find(&recentAudits)
 
 				type ActionCount struct {
@@ -1322,7 +1109,7 @@ func main() {
 					Count  int64  `json:"count"`
 				}
 				var auditSummary []ActionCount
-				database.Model(&AuditLog{}).
+				database.Model(&oasmodel.AuditLog{}).
 					Select("action, COUNT(*) as count").
 					Group("action").
 					Scan(&auditSummary)
@@ -1345,7 +1132,7 @@ func main() {
 				return
 			}
 
-			var approvals []ApprovalRequest
+			var approvals []oasmodel.ApprovalRequest
 			database.Order("created_at DESC").Find(&approvals)
 			response.OK(c, approvals)
 		})
@@ -1390,7 +1177,7 @@ func main() {
 				return
 			}
 
-			approval := ApprovalRequest{
+			approval := oasmodel.ApprovalRequest{
 				Title:       req.Title,
 				Description: req.Description,
 				Type:        req.Type,
@@ -1406,7 +1193,7 @@ func main() {
 			}
 
 			// 审计日志
-			database.Create(&AuditLog{
+			database.Create(&oasmodel.AuditLog{
 				UserID:      usernameStr,
 				UserName:    usernameStr,
 				Plane:       "admin",
@@ -1442,7 +1229,7 @@ func main() {
 			}
 
 			id, _ := parseUint(c.Param("id"))
-			var approval ApprovalRequest
+			var approval oasmodel.ApprovalRequest
 			if err := database.First(&approval, id).Error; err != nil {
 				response.NotFound(c, "approval not found")
 				return
@@ -1464,7 +1251,7 @@ func main() {
 			}
 
 			// 审计日志
-			database.Create(&AuditLog{
+			database.Create(&oasmodel.AuditLog{
 				UserID:      usernameStr,
 				UserName:    usernameStr,
 				Plane:       "admin",
@@ -1500,7 +1287,7 @@ func main() {
 			}
 
 			id, _ := parseUint(c.Param("id"))
-			var approval ApprovalRequest
+			var approval oasmodel.ApprovalRequest
 			if err := database.First(&approval, id).Error; err != nil {
 				response.NotFound(c, "approval not found")
 				return
@@ -1526,7 +1313,7 @@ func main() {
 			}
 
 			// 审计日志
-			database.Create(&AuditLog{
+			database.Create(&oasmodel.AuditLog{
 				UserID:      usernameStr,
 				UserName:    usernameStr,
 				Plane:       "admin",
@@ -1560,7 +1347,7 @@ func main() {
 			}
 
 			id, _ := parseUint(c.Param("id"))
-			var approval ApprovalRequest
+			var approval oasmodel.ApprovalRequest
 			if err := database.First(&approval, id).Error; err != nil {
 				response.NotFound(c, "approval not found")
 				return
@@ -1581,7 +1368,7 @@ func main() {
 			}
 
 			// 审计日志
-			database.Create(&AuditLog{
+			database.Create(&oasmodel.AuditLog{
 				UserID:      usernameStr,
 				UserName:    usernameStr,
 				Plane:       "admin",
@@ -1616,7 +1403,7 @@ func main() {
 			}
 
 			id, _ := parseUint(c.Param("id"))
-			var approval ApprovalRequest
+			var approval oasmodel.ApprovalRequest
 			if err := database.First(&approval, id).Error; err != nil {
 				response.NotFound(c, "approval not found")
 				return
@@ -1628,7 +1415,7 @@ func main() {
 			}
 
 			// 审计日志
-			database.Create(&AuditLog{
+			database.Create(&oasmodel.AuditLog{
 				UserID:      usernameStr,
 				UserName:    usernameStr,
 				Plane:       "admin",
@@ -1648,11 +1435,11 @@ func main() {
 		// ===== 所有权视图 (/admin/ownership) =====
 		admin.GET("/ownership/matrix", func(c *gin.Context) {
 			// 获取域注册信息
-			var domains []DomainRegistry
+			var domains []oasmodel.DomainRegistry
 			database.Order("domain_code").Find(&domains)
 
 			// 获取服务注册信息
-			var services []ServiceRegistry
+			var services []oasmodel.ServiceRegistry
 			database.Order("service_name").Find(&services)
 
 			// 构建所有权矩阵
@@ -1731,7 +1518,7 @@ func main() {
 				}
 			}
 
-			var admins []OASUser
+			var admins []oasmodel.OASUser
 			// OAS-CONSOLE-08: 包含所有治理角色：OU/AU/SU/OAM
 			database.Where("role_code IN ?", []string{"OU", "AU", "SU", "OAM"}).Find(&admins)
 			response.OK(c, admins)
@@ -1773,7 +1560,7 @@ func main() {
 
 			// 检查用户名是否已存在
 			var count int64
-			database.Model(&OASUser{}).Where("username = ?", req.Username).Count(&count)
+			database.Model(&oasmodel.OASUser{}).Where("username = ?", req.Username).Count(&count)
 			if count > 0 {
 				response.BadRequest(c, "username already exists")
 				return
@@ -1789,7 +1576,7 @@ func main() {
 				return
 			}
 
-			user := OASUser{
+			user := oasmodel.OASUser{
 				Username:     req.Username,
 				UserCode:     userCode,
 				DisplayName:  req.DisplayName,
@@ -1805,7 +1592,7 @@ func main() {
 			}
 
 			// 审计日志
-			database.Create(&AuditLog{
+			database.Create(&oasmodel.AuditLog{
 				UserID:      usernameStr,
 				UserName:    usernameStr,
 				Plane:       "admin",
@@ -1838,7 +1625,7 @@ func main() {
 			}
 
 			id, _ := parseUint(c.Param("id"))
-			var user OASUser
+			var user oasmodel.OASUser
 			if err := database.First(&user, id).Error; err != nil {
 				response.NotFound(c, "user not found")
 				return
@@ -1857,7 +1644,7 @@ func main() {
 			}
 
 			// 审计日志
-			database.Create(&AuditLog{
+			database.Create(&oasmodel.AuditLog{
 				UserID:      usernameStr,
 				UserName:    usernameStr,
 				Plane:       "admin",
@@ -1890,7 +1677,7 @@ func main() {
 			}
 
 			id, _ := parseUint(c.Param("id"))
-			var user OASUser
+			var user oasmodel.OASUser
 			if err := database.First(&user, id).Error; err != nil {
 				response.NotFound(c, "user not found")
 				return
@@ -1908,7 +1695,7 @@ func main() {
 			}
 
 			// 审计日志
-			database.Create(&AuditLog{
+			database.Create(&oasmodel.AuditLog{
 				UserID:      usernameStr,
 				UserName:    usernameStr,
 				Plane:       "admin",
@@ -1941,7 +1728,7 @@ func main() {
 			}
 
 			id, _ := parseUint(c.Param("id"))
-			var user OASUser
+			var user oasmodel.OASUser
 			if err := database.First(&user, id).Error; err != nil {
 				response.NotFound(c, "user not found")
 				return
@@ -1973,7 +1760,7 @@ func main() {
 			}
 
 			// 审计日志
-			database.Create(&AuditLog{
+			database.Create(&oasmodel.AuditLog{
 				UserID:      usernameStr,
 				UserName:    usernameStr,
 				Plane:       "admin",
@@ -2030,12 +1817,12 @@ func main() {
 
 		// 系统配置
 		admin.GET("/configs", func(c *gin.Context) {
-			var items []SystemConfig
+			var items []oasmodel.SystemConfig
 			database.Order("category, key").Find(&items)
 			response.OK(c, items)
 		})
 		admin.PUT("/configs/:key", func(c *gin.Context) {
-			var cfg SystemConfig
+			var cfg oasmodel.SystemConfig
 			if err := database.Where("key = ?", c.Param("key")).First(&cfg).Error; err != nil {
 				cfg.Key = c.Param("key")
 			}
@@ -2046,12 +1833,12 @@ func main() {
 
 		// 服务注册
 		admin.GET("/services", func(c *gin.Context) {
-			var items []ServiceRegistry
+			var items []oasmodel.ServiceRegistry
 			database.Order("service_name").Find(&items)
 			response.OK(c, items)
 		})
 		admin.POST("/services", func(c *gin.Context) {
-			var s ServiceRegistry
+			var s oasmodel.ServiceRegistry
 			if err := c.ShouldBindJSON(&s); err != nil {
 				response.BadRequest(c, "invalid request")
 				return
@@ -2062,7 +1849,7 @@ func main() {
 		})
 		admin.PUT("/services/:id/heartbeat", func(c *gin.Context) {
 			now := time.Now()
-			database.Model(&ServiceRegistry{}).Where("id = ?", c.Param("id")).Updates(map[string]interface{}{
+			database.Model(&oasmodel.ServiceRegistry{}).Where("id = ?", c.Param("id")).Updates(map[string]interface{}{
 				"status":       "healthy",
 				"last_seen_at": &now,
 			})
@@ -2078,7 +1865,7 @@ func main() {
 				c.Abort()
 				return
 			}
-			var items []APIKey
+			var items []oasmodel.APIKey
 			database.Order("created_at DESC").Find(&items)
 			response.OK(c, items)
 		})
@@ -2091,7 +1878,7 @@ func main() {
 				return
 			}
 			id := c.Param("id")
-			var k APIKey
+			var k oasmodel.APIKey
 			if err := database.First(&k, id).Error; err != nil {
 				response.NotFound(c, "key not found")
 				return
@@ -2129,7 +1916,7 @@ func main() {
 				return
 			}
 
-			k := APIKey{
+			k := oasmodel.APIKey{
 				KeyName:   req.KeyName,
 				KeyPrefix: prefix,
 				KeyHash:   string(hash),
@@ -2141,7 +1928,7 @@ func main() {
 			database.Create(&k)
 
 			// Audit log
-			database.Create(&AuditLog{
+			database.Create(&oasmodel.AuditLog{
 				UserID:     username.(string),
 				UserName:   username.(string),
 				Plane:      "admin",
@@ -2174,7 +1961,7 @@ func main() {
 			}
 
 			id := c.Param("id")
-			var oldKey APIKey
+			var oldKey oasmodel.APIKey
 			if err := database.First(&oldKey, id).Error; err != nil {
 				response.NotFound(c, "key not found")
 				return
@@ -2197,7 +1984,7 @@ func main() {
 			}
 
 			// Atomic rotation: disable old key + create new key
-			newKey := APIKey{
+			newKey := oasmodel.APIKey{
 				KeyName:   oldKey.KeyName + " (rotated)",
 				KeyPrefix: prefix,
 				KeyHash:   string(hash),
@@ -2209,7 +1996,7 @@ func main() {
 
 			// Transaction for atomicity
 			tx := database.Begin()
-			if err := tx.Model(&APIKey{}).Where("id = ?", oldKey.ID).Update("status", "disabled").Error; err != nil {
+			if err := tx.Model(&oasmodel.APIKey{}).Where("id = ?", oldKey.ID).Update("status", "disabled").Error; err != nil {
 				tx.Rollback()
 				response.InternalError(c, "failed to disable old key")
 				return
@@ -2222,7 +2009,7 @@ func main() {
 			tx.Commit()
 
 			// Audit log
-			database.Create(&AuditLog{
+			database.Create(&oasmodel.AuditLog{
 				UserID:     username.(string),
 				UserName:   username.(string),
 				Plane:      "admin",
@@ -2255,7 +2042,7 @@ func main() {
 			}
 
 			id := c.Param("id")
-			var k APIKey
+			var k oasmodel.APIKey
 			if err := database.First(&k, id).Error; err != nil {
 				response.NotFound(c, "key not found")
 				return
@@ -2264,7 +2051,7 @@ func main() {
 			database.Model(&k).Update("status", "disabled")
 
 			// Audit log
-			database.Create(&AuditLog{
+			database.Create(&oasmodel.AuditLog{
 				UserID:     username.(string),
 				UserName:   username.(string),
 				Plane:      "admin",
@@ -2287,7 +2074,7 @@ func main() {
 			}
 
 			id := c.Param("id")
-			var k APIKey
+			var k oasmodel.APIKey
 			if err := database.First(&k, id).Error; err != nil {
 				response.NotFound(c, "key not found")
 				return
@@ -2302,7 +2089,7 @@ func main() {
 			database.Model(&k).Update("status", "active")
 
 			// Audit log
-			database.Create(&AuditLog{
+			database.Create(&oasmodel.AuditLog{
 				UserID:     username.(string),
 				UserName:   username.(string),
 				Plane:      "admin",
@@ -2325,7 +2112,7 @@ func main() {
 			}
 
 			id := c.Param("id")
-			var k APIKey
+			var k oasmodel.APIKey
 			if err := database.First(&k, id).Error; err != nil {
 				response.NotFound(c, "key not found")
 				return
@@ -2334,7 +2121,7 @@ func main() {
 			database.Delete(&k)
 
 			// Audit log
-			database.Create(&AuditLog{
+			database.Create(&oasmodel.AuditLog{
 				UserID:     username.(string),
 				UserName:   username.(string),
 				Plane:      "admin",
@@ -2356,7 +2143,7 @@ func main() {
 				c.Abort()
 				return
 			}
-			var items []FederationNode
+			var items []oasmodel.FederationNode
 			database.Order("created_at DESC").Find(&items)
 			response.OK(c, items)
 		})
@@ -2369,7 +2156,7 @@ func main() {
 				return
 			}
 			id := c.Param("id")
-			var node FederationNode
+			var node oasmodel.FederationNode
 			if err := database.First(&node, id).Error; err != nil {
 				response.NotFound(c, "node not found")
 				return
@@ -2385,7 +2172,7 @@ func main() {
 				return
 			}
 
-			var node FederationNode
+			var node oasmodel.FederationNode
 			if err := c.ShouldBindJSON(&node); err != nil {
 				response.BadRequest(c, "invalid request")
 				return
@@ -2402,7 +2189,7 @@ func main() {
 			database.Create(&node)
 
 			// Audit log
-			database.Create(&AuditLog{
+			database.Create(&oasmodel.AuditLog{
 				UserID:     username.(string),
 				UserName:   username.(string),
 				Plane:      "admin",
@@ -2425,7 +2212,7 @@ func main() {
 			}
 
 			id := c.Param("id")
-			var node FederationNode
+			var node oasmodel.FederationNode
 			if err := database.First(&node, id).Error; err != nil {
 				response.NotFound(c, "node not found")
 				return
@@ -2469,7 +2256,7 @@ func main() {
 			database.Model(&node).Updates(updates)
 
 			// Audit log
-			database.Create(&AuditLog{
+			database.Create(&oasmodel.AuditLog{
 				UserID:     username.(string),
 				UserName:   username.(string),
 				Plane:      "admin",
@@ -2493,7 +2280,7 @@ func main() {
 			}
 
 			id := c.Param("id")
-			var node FederationNode
+			var node oasmodel.FederationNode
 			if err := database.First(&node, id).Error; err != nil {
 				response.NotFound(c, "node not found")
 				return
@@ -2502,7 +2289,7 @@ func main() {
 			database.Model(&node).Update("status", "suspended")
 
 			// Audit log
-			database.Create(&AuditLog{
+			database.Create(&oasmodel.AuditLog{
 				UserID:     username.(string),
 				UserName:   username.(string),
 				Plane:      "admin",
@@ -2525,7 +2312,7 @@ func main() {
 			}
 
 			id := c.Param("id")
-			var node FederationNode
+			var node oasmodel.FederationNode
 			if err := database.First(&node, id).Error; err != nil {
 				response.NotFound(c, "node not found")
 				return
@@ -2534,7 +2321,7 @@ func main() {
 			database.Model(&node).Update("status", "active")
 
 			// Audit log
-			database.Create(&AuditLog{
+			database.Create(&oasmodel.AuditLog{
 				UserID:     username.(string),
 				UserName:   username.(string),
 				Plane:      "admin",
@@ -2557,7 +2344,7 @@ func main() {
 			}
 
 			id := c.Param("id")
-			var node FederationNode
+			var node oasmodel.FederationNode
 			if err := database.First(&node, id).Error; err != nil {
 				response.NotFound(c, "node not found")
 				return
@@ -2581,7 +2368,7 @@ func main() {
 			database.Model(&node).Update("trust_level", req.TrustLevel)
 
 			// Audit log
-			database.Create(&AuditLog{
+			database.Create(&oasmodel.AuditLog{
 				UserID:     username.(string),
 				UserName:   username.(string),
 				Plane:      "admin",
@@ -2604,7 +2391,7 @@ func main() {
 			}
 
 			id := c.Param("id")
-			var node FederationNode
+			var node oasmodel.FederationNode
 			if err := database.First(&node, id).Error; err != nil {
 				response.NotFound(c, "node not found")
 				return
@@ -2613,7 +2400,7 @@ func main() {
 			database.Delete(&node)
 
 			// Audit log
-			database.Create(&AuditLog{
+			database.Create(&oasmodel.AuditLog{
 				UserID:     username.(string),
 				UserName:   username.(string),
 				Plane:      "admin",
@@ -2635,7 +2422,7 @@ func main() {
 				c.Abort()
 				return
 			}
-			var clients []OAuthClient
+			var clients []oasmodel.OAuthClient
 			database.Order("created_at DESC").Find(&clients)
 			response.OK(c, clients)
 		})
@@ -2648,7 +2435,7 @@ func main() {
 				return
 			}
 			id := c.Param("id")
-			var client OAuthClient
+			var client oasmodel.OAuthClient
 			if err := database.First(&client, id).Error; err != nil {
 				response.NotFound(c, "client not found")
 				return
@@ -2687,7 +2474,7 @@ func main() {
 				req.Scopes = "openid profile email"
 			}
 
-			client := OAuthClient{
+			client := oasmodel.OAuthClient{
 				ClientID:     clientID,
 				ClientName:   req.ClientName,
 				ClientSecret: string(hashedSecret),
@@ -2702,7 +2489,7 @@ func main() {
 			}
 
 			// Audit log
-			database.Create(&AuditLog{
+			database.Create(&oasmodel.AuditLog{
 				UserID:     username.(string),
 				UserName:   username.(string),
 				Plane:      "admin",
@@ -2730,7 +2517,7 @@ func main() {
 			}
 
 			id := c.Param("id")
-			var client OAuthClient
+			var client oasmodel.OAuthClient
 			if err := database.First(&client, id).Error; err != nil {
 				response.NotFound(c, "client not found")
 				return
@@ -2760,7 +2547,7 @@ func main() {
 			database.Model(&client).Updates(updates)
 
 			// Audit log
-			database.Create(&AuditLog{
+			database.Create(&oasmodel.AuditLog{
 				UserID:     username.(string),
 				UserName:   username.(string),
 				Plane:      "admin",
@@ -2784,7 +2571,7 @@ func main() {
 			}
 
 			id := c.Param("id")
-			var client OAuthClient
+			var client oasmodel.OAuthClient
 			if err := database.First(&client, id).Error; err != nil {
 				response.NotFound(c, "client not found")
 				return
@@ -2797,7 +2584,7 @@ func main() {
 			database.Model(&client).Update("client_secret", string(hashedSecret))
 
 			// Audit log
-			database.Create(&AuditLog{
+			database.Create(&oasmodel.AuditLog{
 				UserID:     username.(string),
 				UserName:   username.(string),
 				Plane:      "admin",
@@ -2823,7 +2610,7 @@ func main() {
 			}
 
 			id := c.Param("id")
-			var client OAuthClient
+			var client oasmodel.OAuthClient
 			if err := database.First(&client, id).Error; err != nil {
 				response.NotFound(c, "client not found")
 				return
@@ -2832,7 +2619,7 @@ func main() {
 			database.Model(&client).Update("status", "inactive")
 
 			// Audit log
-			database.Create(&AuditLog{
+			database.Create(&oasmodel.AuditLog{
 				UserID:     username.(string),
 				UserName:   username.(string),
 				Plane:      "admin",
@@ -2855,7 +2642,7 @@ func main() {
 			}
 
 			id := c.Param("id")
-			var client OAuthClient
+			var client oasmodel.OAuthClient
 			if err := database.First(&client, id).Error; err != nil {
 				response.NotFound(c, "client not found")
 				return
@@ -2864,7 +2651,7 @@ func main() {
 			database.Model(&client).Update("status", "active")
 
 			// Audit log
-			database.Create(&AuditLog{
+			database.Create(&oasmodel.AuditLog{
 				UserID:     username.(string),
 				UserName:   username.(string),
 				Plane:      "admin",
@@ -2887,7 +2674,7 @@ func main() {
 			}
 
 			id := c.Param("id")
-			var client OAuthClient
+			var client oasmodel.OAuthClient
 			if err := database.First(&client, id).Error; err != nil {
 				response.NotFound(c, "client not found")
 				return
@@ -2896,7 +2683,7 @@ func main() {
 			database.Delete(&client)
 
 			// Audit log
-			database.Create(&AuditLog{
+			database.Create(&oasmodel.AuditLog{
 				UserID:     username.(string),
 				UserName:   username.(string),
 				Plane:      "admin",
@@ -2938,7 +2725,7 @@ func main() {
 					prefix := parts[0] + "_" + parts[1]
 
 					// Look up API key by prefix
-					var key APIKey
+					var key oasmodel.APIKey
 					if err := database.Where("key_prefix = ?", prefix).First(&key).Error; err == nil {
 						// Check status
 						if key.Status == "active" {
@@ -3014,10 +2801,10 @@ func main() {
 				return
 			}
 
-			var items []AuditLog
+			var items []oasmodel.AuditLog
 			page, _ := parseInt(c.DefaultQuery("page", "1"))
 			size, _ := parseInt(c.DefaultQuery("size", "20"))
-			q := database.Model(&AuditLog{})
+			q := database.Model(&oasmodel.AuditLog{})
 
 			// OAS-CONSOLE-08: XAM domain filtering removed
 			// if isXAM && !isWhitelistB {
@@ -3025,7 +2812,7 @@ func main() {
 			// 	if domainStr, ok := domain.(string); ok && domainStr != "" {
 			// 		q = q.Where("domain = ?", domainStr)
 			// 	} else {
-			// 		response.OK(c, gin.H{"items": []AuditLog{}, "total": 0, "page": page, "size": size})
+			// 		response.OK(c, gin.H{"items": []oasmodel.AuditLog{}, "total": 0, "page": page, "size": size})
 			// 		return
 			// 	}
 			// }
@@ -3044,8 +2831,8 @@ func main() {
 
 		// ===== RBAC 策略管理 (/admin/rbac/*) — OAS 权威源 =====
 		admin.GET("/rbac/policies", func(c *gin.Context) {
-			var items []RBACPolicy
-			q := database.Model(&RBACPolicy{}).Where("policy_type = ?", "rbac")
+			var items []oasmodel.RBACPolicy
+			q := database.Model(&oasmodel.RBACPolicy{}).Where("policy_type = ?", "rbac")
 			if role := c.Query("role_type"); role != "" {
 				q = q.Where("role_type = ?", role)
 			}
@@ -3057,7 +2844,7 @@ func main() {
 		})
 
 		admin.POST("/rbac/policies", func(c *gin.Context) {
-			var p RBACPolicy
+			var p oasmodel.RBACPolicy
 			if err := c.ShouldBindJSON(&p); err != nil {
 				response.BadRequest(c, "invalid request")
 				return
@@ -3078,7 +2865,7 @@ func main() {
 		})
 
 		admin.PUT("/rbac/policies/:id", func(c *gin.Context) {
-			var p RBACPolicy
+			var p oasmodel.RBACPolicy
 			if err := database.First(&p, c.Param("id")).Error; err != nil {
 				response.NotFound(c, "policy not found")
 				return
@@ -3091,7 +2878,7 @@ func main() {
 		})
 
 		admin.DELETE("/rbac/policies/:id", func(c *gin.Context) {
-			database.Delete(&RBACPolicy{}, c.Param("id"))
+			database.Delete(&oasmodel.RBACPolicy{}, c.Param("id"))
 			regeneratePolicyCSV(database, log)
 			response.OK(c, nil)
 		})
@@ -3503,7 +3290,7 @@ func main() {
 			response.TooManyRequests(c, "too many failed attempts, try again in "+lockout.Round(time.Second).String())
 			return
 		}
-		var user OASUser
+		var user oasmodel.OASUser
 		if err := database.Where("username = ?", req.Username).First(&user).Error; err != nil {
 			loginLimiter.RecordFailure(clientIP, req.Username)
 			response.Unauthorized(c, "invalid credentials")
@@ -3556,7 +3343,7 @@ func main() {
 			response.InternalError(c, "failed to issue token")
 			return
 		}
-		database.Create(&AuditLog{
+		database.Create(&oasmodel.AuditLog{
 			UserID:      user.UserCode,
 			UserName:    user.DisplayName,
 			Plane:       "admin",
@@ -3592,7 +3379,7 @@ func main() {
 				return
 			}
 			// 查询用户 role_code
-			var user OASUser
+			var user oasmodel.OASUser
 			if database.Where("username = ?", username).First(&user).Error == nil && user.RoleCode != "" {
 				roleCode = user.RoleCode
 			}
@@ -3623,7 +3410,7 @@ func main() {
 			LastLoginAt *string  `json:"last_login_at,omitempty"`
 			CreatedAt   string   `json:"created_at"`
 		}
-		var users []OASUser
+		var users []oasmodel.OASUser
 		database.Order("created_at DESC").Find(&users)
 		var result []UserVO
 		for _, u := range users {
@@ -3670,13 +3457,13 @@ func main() {
 			response.Forbidden(c, "only oas-ou-admin and oas-au-admin can create admin accounts")
 			return
 		}
-		var existing OASUser
+		var existing oasmodel.OASUser
 		if database.Where("username = ?", req.Username).First(&existing).Error == nil {
 			response.BadRequest(c, "username already exists")
 			return
 		}
 		// 校验 role_code 是否存在
-		var roleCheck OASRole
+		var roleCheck oasmodel.OASRole
 		if database.Where("role_code = ?", req.RoleCode).First(&roleCheck).Error != nil {
 			response.BadRequest(c, "role_code not found: "+req.RoleCode)
 			return
@@ -3691,7 +3478,7 @@ func main() {
 			displayName = req.Username
 		}
 		userCode := fmt.Sprintf("XHPZ#%s-%d", req.RoleCode, time.Now().UnixNano()%100000)
-		user := OASUser{
+		user := oasmodel.OASUser{
 			UserCode:     userCode,
 			Username:     req.Username,
 			PasswordHash: string(hash),
@@ -3710,9 +3497,9 @@ func main() {
 			roleCodes = []string{req.RoleCode}
 		}
 		for _, rc := range roleCodes {
-			var role OASRole
+			var role oasmodel.OASRole
 			if database.Where("role_code = ?", rc).First(&role).Error == nil {
-				database.Table("user_roles").Create(&OASUserRole{
+				database.Table("user_roles").Create(&oasmodel.OASUserRole{
 					UserID:    user.ID,
 					RoleID:    role.ID,
 					GrantedBy: "admin",
@@ -3720,7 +3507,7 @@ func main() {
 				})
 			}
 		}
-		database.Create(&AuditLog{
+		database.Create(&oasmodel.AuditLog{
 			Plane:       "admin",
 			Action:      "user.create",
 			UserID:      user.UserCode,
@@ -3745,18 +3532,18 @@ func main() {
 		}
 		id, _ := parseUint(c.Param("id"))
 		// 白名单 B：修改 admin 账号角色仅 OU/AU admin 可操作
-		var targetUser OASUser
+		var targetUser oasmodel.OASUser
 		database.First(&targetUser, id)
 		operatorUsername, _ := c.Get("username")
 		if isAdminAccount(targetUser.Username) && !canOperateAdminAccount(database, fmt.Sprintf("%v", operatorUsername)) {
 			response.Forbidden(c, "only oas-ou-admin and oas-au-admin can modify admin account roles")
 			return
 		}
-		database.Where("user_id = ?", id).Delete(&OASUserRole{})
+		database.Where("user_id = ?", id).Delete(&oasmodel.OASUserRole{})
 		for _, rc := range req.Roles {
-			var role OASRole
+			var role oasmodel.OASRole
 			if database.Where("role_code = ?", rc).First(&role).Error == nil {
-				database.Table("user_roles").Create(&OASUserRole{
+				database.Table("user_roles").Create(&oasmodel.OASUserRole{
 					UserID:    id,
 					RoleID:    role.ID,
 					GrantedBy: "admin",
@@ -3764,7 +3551,7 @@ func main() {
 				})
 			}
 		}
-		database.Create(&AuditLog{
+		database.Create(&oasmodel.AuditLog{
 			Plane:       "admin",
 			Action:      "user.update_roles",
 			Resource:    "user",
@@ -3790,15 +3577,15 @@ func main() {
 		}
 		id, _ := parseUint(c.Param("id"))
 		// 白名单 B：修改 admin 账号状态仅 OU/AU admin 可操作
-		var targetUser OASUser
+		var targetUser oasmodel.OASUser
 		database.First(&targetUser, id)
 		operatorUsername, _ := c.Get("username")
 		if isAdminAccount(targetUser.Username) && !canOperateAdminAccount(database, fmt.Sprintf("%v", operatorUsername)) {
 			response.Forbidden(c, "only oas-ou-admin and oas-au-admin can modify admin account status")
 			return
 		}
-		database.Model(&OASUser{}).Where("id = ?", id).Update("status", req.Status)
-		database.Create(&AuditLog{
+		database.Model(&oasmodel.OASUser{}).Where("id = ?", id).Update("status", req.Status)
+		database.Create(&oasmodel.AuditLog{
 			Plane:       "admin",
 			Action:      "user.update_status",
 			Resource:    "user",
@@ -3819,7 +3606,7 @@ func main() {
 			return
 		}
 		id, _ := parseUint(c.Param("id"))
-		var targetUser OASUser
+		var targetUser oasmodel.OASUser
 		if database.First(&targetUser, id).Error != nil {
 			response.NotFound(c, "user not found")
 			return
@@ -3830,16 +3617,16 @@ func main() {
 			return
 		}
 		// 删除用户角色关联
-		database.Where("user_id = ?", id).Delete(&OASUserRole{})
+		database.Where("user_id = ?", id).Delete(&oasmodel.OASUserRole{})
 		// 审计日志 - 记录操作者身份，resource_id 为被删用户 id
-		var operator OASUser
+		var operator oasmodel.OASUser
 		operatorUserCode := ""
 		operatorDisplayName := ""
 		if database.Where("username = ?", operatorUsername).First(&operator).Error == nil {
 			operatorUserCode = operator.UserCode
 			operatorDisplayName = operator.DisplayName
 		}
-		database.Create(&AuditLog{
+		database.Create(&oasmodel.AuditLog{
 			Plane:       "admin",
 			Action:      "admin.account.delete",
 			UserID:      operatorUserCode,
@@ -3857,7 +3644,7 @@ func main() {
 
 	// GET /api/v1/auth/roles — list available roles
 	api.GET("/auth/roles", func(c *gin.Context) {
-		var roles []OASRole
+		var roles []oasmodel.OASRole
 		database.Order("role_code").Find(&roles)
 		type RoleVO struct {
 			Code string `json:"code"`
@@ -3878,7 +3665,7 @@ func main() {
 	}
 	// GET /api/v1/admin/roles — list all roles
 	adminRoles.GET("", func(c *gin.Context) {
-		var roles []OASRole
+		var roles []oasmodel.OASRole
 		database.Order("role_code").Find(&roles)
 		type RoleDetail struct {
 			ID          uint64 `json:"id"`
@@ -3916,7 +3703,7 @@ func main() {
 			response.BadRequest(c, "invalid request: "+err.Error())
 			return
 		}
-		role := OASRole{
+		role := oasmodel.OASRole{
 			RoleCode:    req.RoleCode,
 			Name:        req.Name,
 			Description: req.Description,
@@ -3928,7 +3715,7 @@ func main() {
 		}
 		// Audit log
 		operator, _ := c.Get("username")
-		database.Create(&AuditLog{
+		database.Create(&oasmodel.AuditLog{
 			Action:     "role.create",
 			Plane:      "admin",
 			UserID:     fmt.Sprintf("%v", operator),
@@ -3942,7 +3729,7 @@ func main() {
 	// PUT /api/v1/admin/roles/:id — update role
 	adminRoles.PUT("/:id", func(c *gin.Context) {
 		id := c.Param("id")
-		var role OASRole
+		var role oasmodel.OASRole
 		if err := database.First(&role, id).Error; err != nil {
 			response.NotFound(c, "role not found")
 			return
@@ -3971,7 +3758,7 @@ func main() {
 		}
 		// Audit log
 		operator, _ := c.Get("username")
-		database.Create(&AuditLog{
+		database.Create(&oasmodel.AuditLog{
 			Action:     "role.update",
 			Plane:      "admin",
 			UserID:     fmt.Sprintf("%v", operator),
@@ -3985,7 +3772,7 @@ func main() {
 	// DELETE /api/v1/admin/roles/:id — delete role
 	adminRoles.DELETE("/:id", func(c *gin.Context) {
 		id := c.Param("id")
-		var role OASRole
+		var role oasmodel.OASRole
 		if err := database.First(&role, id).Error; err != nil {
 			response.NotFound(c, "role not found")
 			return
@@ -4000,7 +3787,7 @@ func main() {
 		database.Delete(&role, id)
 		// Audit log
 		operator, _ := c.Get("username")
-		database.Create(&AuditLog{
+		database.Create(&oasmodel.AuditLog{
 			Action:     "role.delete",
 			Plane:      "admin",
 			UserID:     fmt.Sprintf("%v", operator),
@@ -4106,7 +3893,7 @@ func main() {
 			}
 			operator, _ := c.Get("user_id")
 			domain, _ := c.Get("domain")
-			database.Create(&AuditLog{
+			database.Create(&oasmodel.AuditLog{
 				Plane:       "admin",
 				Action:      "org.create",
 				UserID:      fmt.Sprintf("%v", operator),
@@ -4160,7 +3947,7 @@ func main() {
 			}
 			operator, _ := c.Get("user_id")
 			domain, _ := c.Get("domain")
-			database.Create(&AuditLog{
+			database.Create(&oasmodel.AuditLog{
 				Plane:       "admin",
 				Action:      "org.update",
 				UserID:      fmt.Sprintf("%v", operator),
@@ -4201,7 +3988,7 @@ func main() {
 			}
 			operator, _ := c.Get("user_id")
 			domain, _ := c.Get("domain")
-			database.Create(&AuditLog{
+			database.Create(&oasmodel.AuditLog{
 				Plane:       "admin",
 				Action:      "org.delete",
 				UserID:      fmt.Sprintf("%v", operator),
@@ -4261,7 +4048,7 @@ func main() {
 				return
 			}
 			// Check if user exists
-			var user OASUser
+			var user oasmodel.OASUser
 			if err := database.First(&user, req.UserID).Error; err != nil {
 				response.NotFound(c, "user not found")
 				return
@@ -4283,7 +4070,7 @@ func main() {
 			}
 			operator, _ := c.Get("user_id")
 			domain, _ := c.Get("domain")
-			database.Create(&AuditLog{
+			database.Create(&oasmodel.AuditLog{
 				Plane:       "admin",
 				Action:      "org.member.add",
 				UserID:      fmt.Sprintf("%v", operator),
@@ -4323,7 +4110,7 @@ func main() {
 			}
 			operator, _ := c.Get("user_id")
 			domain, _ := c.Get("domain")
-			database.Create(&AuditLog{
+			database.Create(&oasmodel.AuditLog{
 				Plane:       "admin",
 				Action:      "org.member.remove",
 				UserID:      fmt.Sprintf("%v", operator),
@@ -4464,9 +4251,9 @@ func ptrString(s string) *string {
 	return &s
 }
 
-// regeneratePolicyCSV reads all active RBACPolicy from DB and writes the Casbin-compatible CSV.
+// regeneratePolicyCSV reads all active oasmodel.RBACPolicy from DB and writes the Casbin-compatible CSV.
 func regeneratePolicyCSV(database *gorm.DB, log *zap.Logger) {
-	var policies []RBACPolicy
+	var policies []oasmodel.RBACPolicy
 	database.Where("policy_type = ? AND status = ?", "rbac", "active").
 		Order("subject, resource").Find(&policies)
 
@@ -4499,7 +4286,7 @@ func regeneratePolicyCSV(database *gorm.DB, log *zap.Logger) {
 // seedRBACPolicies seeds the default 12U + CX/FX + NHI policies if the table is empty.
 func seedRBACPolicies(database *gorm.DB, log *zap.Logger) {
 	var count int64
-	database.Model(&RBACPolicy{}).Where("policy_type = ?", "rbac").Count(&count)
+	database.Model(&oasmodel.RBACPolicy{}).Where("policy_type = ?", "rbac").Count(&count)
 	if count > 0 {
 		return
 	}
@@ -4553,7 +4340,7 @@ func seedRBACPolicies(database *gorm.DB, log *zap.Logger) {
 	}
 
 	for _, s := range seeds {
-		database.Create(&RBACPolicy{
+		database.Create(&oasmodel.RBACPolicy{
 			PolicyType: "rbac",
 			Subject:    s.subject,
 			Resource:   s.resource,
@@ -4591,7 +4378,7 @@ func canOperateAdminAccount(db *gorm.DB, operatorUsername string) bool {
 	}
 
 	// Query user's role_code from database
-	var user OASUser
+	var user oasmodel.OASUser
 	if err := db.Where("username = ?", operatorUsername).First(&user).Error; err != nil {
 		return false
 	}
@@ -4613,7 +4400,7 @@ func isInAdminWhitelistA(db *gorm.DB, username string) bool {
 	}
 
 	// Query user's role_code from database
-	var user OASUser
+	var user oasmodel.OASUser
 	if err := db.Where("username = ?", username).First(&user).Error; err != nil {
 		return false
 	}
@@ -4670,29 +4457,29 @@ func seedTestUsers(database *gorm.DB, log *zap.Logger, edition string) {
 	}
 
 	// 确保 SU/AU/OU/OAM 角色存在
-	var suRole OASRole
+	var suRole oasmodel.OASRole
 	database.Where("role_code = ?", "SU").First(&suRole)
 	if suRole.ID == 0 {
-		suRole = OASRole{RoleCode: "SU", Name: "System User", Description: "System User role"}
+		suRole = oasmodel.OASRole{RoleCode: "SU", Name: "System User", Description: "System User role"}
 		database.Create(&suRole)
 	}
-	var auRole OASRole
+	var auRole oasmodel.OASRole
 	database.Where("role_code = ?", "AU").First(&auRole)
 	if auRole.ID == 0 {
-		auRole = OASRole{RoleCode: "AU", Name: "AU User", Description: "AU User role"}
+		auRole = oasmodel.OASRole{RoleCode: "AU", Name: "AU User", Description: "AU User role"}
 		database.Create(&auRole)
 	}
 	// OAS-CONSOLE-08: 新增 OU 角色（生态董事长）
-	var ouRole OASRole
+	var ouRole oasmodel.OASRole
 	database.Where("role_code = ?", "OU").First(&ouRole)
 	if ouRole.ID == 0 {
-		ouRole = OASRole{RoleCode: "OU", Name: "OU User", Description: "Organization Unit User role"}
+		ouRole = oasmodel.OASRole{RoleCode: "OU", Name: "OU User", Description: "Organization Unit User role"}
 		database.Create(&ouRole)
 	}
-	var oamRole OASRole
+	var oamRole oasmodel.OASRole
 	database.Where("role_code = ?", "OAM").First(&oamRole)
 	if oamRole.ID == 0 {
-		oamRole = OASRole{RoleCode: "OAM", Name: "OAM User", Description: "OAM User role"}
+		oamRole = oasmodel.OASRole{RoleCode: "OAM", Name: "OAM User", Description: "OAM User role"}
 		database.Create(&oamRole)
 	}
 
@@ -4710,10 +4497,10 @@ func seedTestUsers(database *gorm.DB, log *zap.Logger, edition string) {
 	// 	{Code: "VAM", Name: "Operations Admin", Description: "运营域管理员", Permissions: `["vam:org:read","vam:org:manage","vam:member:read","vam:member:manage"]`},
 	// }
 	// for _, xr := range xamRoles {
-	// 	var existing OASRole
+	// 	var existing oasmodel.OASRole
 	// 	database.Where("role_code = ?", xr.Code).First(&existing)
 	// 	if existing.ID == 0 {
-	// 		role := OASRole{
+	// 		role := oasmodel.OASRole{
 	// 			RoleCode:    xr.Code,
 	// 			Name:        xr.Name,
 	// 			Description: xr.Description,
@@ -4727,17 +4514,17 @@ func seedTestUsers(database *gorm.DB, log *zap.Logger, edition string) {
 
 	// 创建管理员账号（如果不存在）
 	for _, acc := range adminAccounts {
-		var existing OASUser
+		var existing oasmodel.OASUser
 		database.Where("username = ?", acc.Username).First(&existing)
 		// 找到对应的角色
-		var targetRole OASRole
+		var targetRole oasmodel.OASRole
 		database.Where("role_code = ?", acc.RoleCode).First(&targetRole)
 		if targetRole.ID == 0 {
 			log.Error("role not found for admin account", zap.String("username", acc.Username), zap.String("role_code", acc.RoleCode))
 			continue
 		}
 		if existing.ID == 0 {
-			user := OASUser{
+			user := oasmodel.OASUser{
 				UserCode:     acc.UserCode,
 				Username:     acc.Username,
 				PasswordHash: hashStr,
@@ -4748,7 +4535,7 @@ func seedTestUsers(database *gorm.DB, log *zap.Logger, edition string) {
 				RoleCode:     acc.RoleCode,
 			}
 			if err := database.Create(&user).Error; err == nil {
-				assignment := OASUserRole{UserID: user.ID, RoleID: targetRole.ID, GrantedBy: "system-seed", GrantedAt: time.Now()}
+				assignment := oasmodel.OASUserRole{UserID: user.ID, RoleID: targetRole.ID, GrantedBy: "system-seed", GrantedAt: time.Now()}
 				database.Table("user_roles").Create(&assignment)
 				log.Info("admin user created", zap.String("username", acc.Username), zap.String("role_code", acc.RoleCode))
 			}
@@ -4759,7 +4546,7 @@ func seedTestUsers(database *gorm.DB, log *zap.Logger, edition string) {
 				log.Info("admin user role_code updated", zap.String("username", acc.Username), zap.String("role_code", acc.RoleCode))
 			}
 			// 更新 user_roles 表
-			var existingAssignment OASUserRole
+			var existingAssignment oasmodel.OASUserRole
 			database.Where("user_id = ?", existing.ID).First(&existingAssignment)
 			if existingAssignment.RoleID != targetRole.ID {
 				database.Model(&existingAssignment).Update("role_id", targetRole.ID)
@@ -4773,14 +4560,14 @@ func seedTestUsers(database *gorm.DB, log *zap.Logger, edition string) {
 	xamRoleCodes := []string{"TAM", "HAM", "YAM", "VAM"}
 	for _, roleCode := range xamRoleCodes {
 		// 查找该角色对应的 role_id
-		var xamRole OASRole
+		var xamRole oasmodel.OASRole
 		if err := database.Where("role_code = ?", roleCode).First(&xamRole).Error; err == nil {
 			// 查找该角色下的所有用户
-			var xamAssignments []OASUserRole
+			var xamAssignments []oasmodel.OASUserRole
 			database.Where("role_id = ?", xamRole.ID).Find(&xamAssignments)
 			for _, assignment := range xamAssignments {
 				// 禁用用户
-				database.Model(&OASUser{}).Where("id = ?", assignment.UserID).Update("status", "disabled")
+				database.Model(&oasmodel.OASUser{}).Where("id = ?", assignment.UserID).Update("status", "disabled")
 				log.Info("XAM user disabled", zap.Uint64("user_id", assignment.UserID), zap.String("role_code", roleCode))
 			}
 		}
@@ -4810,10 +4597,10 @@ func seedTestUsers(database *gorm.DB, log *zap.Logger, edition string) {
 	// Create roles and users
 	for _, acc := range accounts {
 		// Create role if not exists
-		var role OASRole
+		var role oasmodel.OASRole
 		database.Where("role_code = ?", acc.RoleCode).First(&role)
 		if role.ID == 0 {
-			role = OASRole{
+			role = oasmodel.OASRole{
 				RoleCode:    acc.RoleCode,
 				Name:        acc.RoleName,
 				Description: acc.RoleName + " role",
@@ -4827,10 +4614,10 @@ func seedTestUsers(database *gorm.DB, log *zap.Logger, edition string) {
 
 		// Create user
 		// Create user if not exists
-		var existingUser OASUser
+		var existingUser oasmodel.OASUser
 		database.Where("username = ?", acc.Username).First(&existingUser)
 		if existingUser.ID == 0 {
-			user := OASUser{
+			user := oasmodel.OASUser{
 				UserCode:     acc.UserCode,
 				Username:     acc.Username,
 				PasswordHash: hashStr,
@@ -4846,7 +4633,7 @@ func seedTestUsers(database *gorm.DB, log *zap.Logger, edition string) {
 			}
 
 			// Assign role
-			assignment := OASUserRole{
+			assignment := oasmodel.OASUserRole{
 				UserID:    user.ID,
 				RoleID:    role.ID,
 				GrantedBy: "system-seed",
@@ -4859,10 +4646,10 @@ func seedTestUsers(database *gorm.DB, log *zap.Logger, edition string) {
 			}
 		} else {
 			// User exists, ensure role assignment exists
-			var existingAssignment OASUserRole
+			var existingAssignment oasmodel.OASUserRole
 			database.Where("user_id = ? AND role_id = ?", existingUser.ID, role.ID).First(&existingAssignment)
 			if existingAssignment.ID == 0 {
-				assignment := OASUserRole{
+				assignment := oasmodel.OASUserRole{
 					UserID:    existingUser.ID,
 					RoleID:    role.ID,
 					GrantedBy: "system-seed",
@@ -4876,7 +4663,7 @@ func seedTestUsers(database *gorm.DB, log *zap.Logger, edition string) {
 
 	// Create disabled user for testing 403 response
 	hash2, _ := password.Hash("disabled123")
-	database.Create(&OASUser{
+	database.Create(&oasmodel.OASUser{
 		UserCode:     "XHPZ#DU-DISABLED",
 		Username:     "disabled_user",
 		PasswordHash: string(hash2),
