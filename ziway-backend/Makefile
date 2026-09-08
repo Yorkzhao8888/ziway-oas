@@ -40,8 +40,6 @@ build-ms: $(BIN_DIR) ## Build ziway-ms (12 MBS, port 8081)
 build-os: $(BIN_DIR) ## Build ziway-os (12 BOS, port 8082)
 	go build -o $(BIN_DIR)/os ./$(CMD_DIR)/os/
 
-build-ams: ## Build AMS P1 independent service (services/ams)
-	cd services/ams && go mod tidy && go build -o $(SCRIPT_DIR)/$(BIN_DIR)/ams ./cmd/server/
 
 run-oas: build-oas ## Run OAS on port 8080 (SQLite dev)
 	APP_ENV=dev ZIWAY_SERVER_HTTP_PORT=8080 ./$(BIN_DIR)/oas
@@ -86,7 +84,6 @@ clean: ## Remove build artifacts and dev database
 # BOS  :8082  /api/v1/os/{cbos,dbos,ibos,vbos,pbos,abos,ebos,hbos,sbos,fbos,gbos,obos}/
 #
 # P1 Independent Service:
-# AMS  services/ams/  (独立Go模块, JWT+Casbin+12U角色, 99.99% SLA)
 # ============================================
 
 help: ## Show this help
