@@ -597,11 +597,11 @@ func main() {
 	}
 
 	// ===== POST /api/v1/auth/dev-token — temporary token for development =====
-	// Environment-aware: PROD always disabled (security red line), only DEV allows dev-token
-	isProd := os.Getenv("COZE_PROJECT_ENV") == "PROD"
+	// Environment-aware: OAS_ENV controls availability (DEV/BETA allow, RC/PROD disabled)
+	// Single source of truth: OAS_ENV (not COZE_PROJECT_ENV which may be auto-injected)
 	devTokenEnv := os.Getenv("ZIWAY_DEV_TOKEN_ENABLED")
-	// PROD: always disabled; non-PROD: enabled only if OAS_ENV=DEV and not explicitly set to "false"
-	devTokenEnabled := !isProd && envpolicy.IsDevTokenEnabled(oasEnv) && devTokenEnv != "false"
+	// DEV/BETA: enabled unless explicitly set to "false"; RC/PROD: always disabled
+	devTokenEnabled := envpolicy.IsDevTokenEnabled(oasEnv) && devTokenEnv != "false"
 	if devTokenEnabled {
 		api.POST("/auth/dev-token", func(c *gin.Context) {
 			if jwtIssuer == nil {
@@ -706,7 +706,7 @@ func main() {
 				"user_code":  user.UserCode,
 			})
 		})
-		log.Info("DEV token endpoint enabled (non-PROD environment)", zap.String("oas_env", oasEnv.String()), zap.Bool("is_prod", isProd), zap.String("ZIWAY_DEV_TOKEN_ENABLED", devTokenEnv))
+		log.Info("DEV token endpoint enabled (DEV/BETA environment)", zap.String("oas_env", oasEnv.String()), zap.String("ZIWAY_DEV_TOKEN_ENABLED", devTokenEnv))
 	}
 
 	// ===== Owner Plane (/owner/*) — OU 权限 =====
