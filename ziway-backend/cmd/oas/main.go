@@ -31,6 +31,12 @@ import (
 	"gorm.io/gorm"
 )
 
+// hashSecret hashes a secret string using bcrypt
+func hashSecret(secret string) string {
+	hash, _ := bcrypt.GenerateFromPassword([]byte(secret), bcrypt.DefaultCost)
+	return string(hash)
+}
+
 // ========== OAS Models (Owner + Admin shared) ==========
 
 // SystemConfig 系统配置项
@@ -140,6 +146,34 @@ type FederationNode struct {
 	DeletedAt    gorm.DeletedAt `gorm:"index" json:"-"`
 }
 
+// OAuthClient OAuth 客户端注册（OAS-CONSOLE-06）
+type OAuthClient struct {
+	ID          uint64         `gorm:"primarykey" json:"id"`
+	ClientID    string         `gorm:"uniqueIndex;size:64" json:"client_id"`
+	ClientName  string         `gorm:"size:128" json:"client_name"`
+	ClientSecret string        `gorm:"size:128" json:"-"` // bcrypt hashed
+	RedirectURI string         `gorm:"type:text" json:"redirect_uri"` // comma-separated
+	Scopes      string         `gorm:"type:text" json:"scopes"`       // comma-separated
+	Status      string         `gorm:"size:16;default:active" json:"status"` // active/inactive
+	CreatedBy   string         `gorm:"size:32" json:"created_by"`
+	CreatedAt   time.Time      `json:"created_at"`
+	UpdatedAt   time.Time      `json:"updated_at"`
+	DeletedAt   gorm.DeletedAt `gorm:"index" json:"-"`
+}
+
+// OAuthAuthorizationCode 授权码（OAS-CONSOLE-06）
+type OAuthAuthorizationCode struct {
+	ID          uint64    `gorm:"primarykey" json:"id"`
+	Code        string    `gorm:"uniqueIndex;size:64" json:"code"`
+	ClientID    string    `gorm:"size:64;index" json:"client_id"`
+	UserID      string    `gorm:"size:32;index" json:"user_id"`
+	RedirectURI string    `gorm:"size:512" json:"redirect_uri"`
+	Scopes      string    `gorm:"type:text" json:"scopes"`
+	ExpiresAt   time.Time `json:"expires_at"`
+	Used        bool      `gorm:"default:false" json:"used"`
+	CreatedAt   time.Time `json:"created_at"`
+}
+
 // RBACPolicy OAS 权威源 — 唯一 RBAC 策略存储。
 // PolicyType 固定为 "rbac"；OAS 为策略唯一写入点，变更后同步 CSV 供 OS 加载。
 type RBACPolicy struct {
@@ -247,6 +281,7 @@ func main() {
 		&FederationNode{}, &RBACPolicy{}, &OASUser{}, &OASRole{}, &OASUserRole{},
 		&model.Organization{}, &model.UserOrganization{},
 		&ApprovalRequest{},
+		&OAuthClient{}, &OAuthAuthorizationCode{},
 	)
 
 	// Migrate existing admin accounts to have proper role_code
@@ -709,6 +744,84 @@ func main() {
 		log.Info("DEV token endpoint enabled (DEV/BETA environment)", zap.String("oas_env", oasEnv.String()), zap.String("ZIWAY_DEV_TOKEN_ENABLED", devTokenEnv))
 	}
 
+	// POST /api/v1/oauth/authorize-code — Generate authorization code (called after login in OAuth flow)
+	if jwtVerifier != nil {
+		api.POST("/oauth/authorize-code", middleware.JWTAuth(jwtVerifier, nil, log), func(c *gin.Context) {
+			var req struct {
+				ClientID    string `json:"client_id" binding:"required"`
+				RedirectURI string `json:"redirect_uri" binding:"required"`
+				State       string `json:"state"`
+			}
+			if err := c.ShouldBindJSON(&req); err != nil {
+				response.BadRequest(c, "client_id and redirect_uri required")
+				return
+			}
+
+			// Validate client
+			var client OAuthClient
+			if err := database.Where("client_id = ? AND status = ?", req.ClientID, "active").First(&client).Error; err != nil {
+				response.BadRequest(c, "invalid client_id")
+				return
+			}
+
+			// Validate redirect_uri
+			allowedURIs := strings.Split(client.RedirectURI, ",")
+			uriValid := false
+			for _, uri := range allowedURIs {
+				if strings.TrimSpace(uri) == req.RedirectURI {
+					uriValid = true
+					break
+				}
+			}
+			if !uriValid {
+				response.BadRequest(c, "invalid redirect_uri")
+				return
+			}
+
+			// Get user from JWT
+			userCode, _ := c.Get("user_code")
+			var user OASUser
+			if err := database.Where("user_code = ?", userCode).First(&user).Error; err != nil {
+				response.InternalError(c, "user not found")
+				return
+			}
+
+			// Generate authorization code
+			code := fmt.Sprintf("auth_%d_%d", user.ID, time.Now().UnixNano())
+			authCode := OAuthAuthorizationCode{
+				Code:        code,
+				ClientID:    req.ClientID,
+				UserID:      user.UserCode,
+				RedirectURI: req.RedirectURI,
+				Scopes:      client.Scopes,
+				ExpiresAt:   time.Now().Add(5 * time.Minute),
+				Used:        false,
+			}
+			if err := database.Create(&authCode).Error; err != nil {
+				response.InternalError(c, "failed to create authorization code")
+				return
+			}
+
+			// Audit log
+			database.Create(&AuditLog{
+				UserID:      user.UserCode,
+				UserName:    user.DisplayName,
+				Plane:       "admin",
+				Action:      "oauth.authorize",
+				Resource:    "code",
+				Detail:      fmt.Sprintf("env=%s, client=%s, redirect=%s, state=%s", oasEnv.String(), req.ClientID, req.RedirectURI, req.State),
+				IP:          c.ClientIP(),
+				UserAgent:   c.Request.UserAgent(),
+				Environment: oasEnv.String(),
+				Domain:      user.Domain,
+			})
+
+			response.OK(c, gin.H{
+				"code": code,
+			})
+		})
+	}
+
 	// ===== Owner Plane (/owner/*) — OU 权限 =====
 	owner := api.Group("/owner")
 	{
@@ -762,6 +875,275 @@ func main() {
 			response.OK(c, p)
 		})
 	}
+
+	// ===== OAuth 2.0 / OIDC Endpoints (OAS-CONSOLE-06) =====
+	// OAuth client registration (seed default clients for BETA/DEV)
+	if envpolicy.IsQuickLoginEnabled(oasEnv) {
+		var clientCount int64
+		database.Model(&OAuthClient{}).Count(&clientCount)
+		if clientCount == 0 {
+			// Seed default OAuth clients for testing
+			defaultClients := []OAuthClient{
+				{
+					ClientID:     "oas-console",
+					ClientName:   "OAS Console",
+					ClientSecret: hashSecret("oas-console-secret"),
+					RedirectURI:  "http://localhost:5000/callback,https://62j75kfyn3.coze.site/callback",
+					Scopes:       "openid,profile,email",
+					Status:       "active",
+					CreatedBy:    "system",
+				},
+				{
+					ClientID:     "booth-app",
+					ClientName:   "Booth Application",
+					ClientSecret: hashSecret("booth-secret"),
+					RedirectURI:  "http://localhost:3000/auth/callback",
+					Scopes:       "openid,profile",
+					Status:       "active",
+					CreatedBy:    "system",
+				},
+			}
+			for _, client := range defaultClients {
+				database.Create(&client)
+			}
+			log.Info("OAuth clients seeded", zap.Int("count", len(defaultClients)))
+		}
+	}
+
+	// GET /.well-known/openid-configuration — OIDC discovery
+	r.GET("/.well-known/openid-configuration", func(c *gin.Context) {
+		issuer := v.GetString("jwt.issuer")
+		if issuer == "" {
+			issuer = "https://oas.ziway.eco"
+		}
+		baseURL := c.Request.Host
+		if !strings.HasPrefix(baseURL, "http") {
+			scheme := "https"
+			if strings.Contains(baseURL, "localhost") || strings.Contains(baseURL, "127.0.0.1") {
+				scheme = "http"
+			}
+			baseURL = scheme + "://" + baseURL
+		}
+		response.OK(c, gin.H{
+			"issuer":                 issuer,
+			"authorization_endpoint": baseURL + "/oauth/authorize",
+			"token_endpoint":         baseURL + "/oauth/token",
+			"userinfo_endpoint":      baseURL + "/oauth/userinfo",
+			"jwks_uri":               baseURL + "/oauth/jwks",
+			"scopes_supported":       []string{"openid", "profile", "email"},
+			"response_types_supported": []string{"code"},
+			"grant_types_supported":    []string{"authorization_code"},
+			"subject_types_supported":  []string{"public"},
+			"id_token_signing_alg_values_supported": []string{"RS256"},
+			"token_endpoint_auth_methods_supported":  []string{"client_secret_post", "client_secret_basic"},
+			"claims_supported": []string{"sub", "iss", "aud", "exp", "iat", "name", "email", "role"},
+		})
+	})
+
+	// GET /oauth/jwks — JWKS endpoint
+	r.GET("/oauth/jwks", func(c *gin.Context) {
+		if jwtPublicKey == nil {
+			response.InternalError(c, "public key not configured")
+			return
+		}
+		// Convert RSA public key to JWK format
+		keyJSON := gin.H{
+			"kty": "RSA",
+			"use": "sig",
+			"alg": "RS256",
+			"kid": "oas-rs256-key",
+			"n":   base64.RawURLEncoding.EncodeToString(jwtPublicKey.N.Bytes()),
+			"e":   base64.RawURLEncoding.EncodeToString(big.NewInt(int64(jwtPublicKey.E)).Bytes()),
+		}
+		response.OK(c, gin.H{"keys": []gin.H{keyJSON}})
+	})
+
+	// GET /oauth/authorize — Authorization endpoint
+	r.GET("/oauth/authorize", func(c *gin.Context) {
+		clientID := c.Query("client_id")
+		redirectURI := c.Query("redirect_uri")
+		responseType := c.Query("response_type")
+		scope := c.Query("scope")
+		state := c.Query("state")
+
+		if responseType != "code" {
+			response.BadRequest(c, "unsupported response_type, only 'code' is supported")
+			return
+		}
+
+		// Validate client
+		var client OAuthClient
+		if err := database.Where("client_id = ? AND status = ?", clientID, "active").First(&client).Error; err != nil {
+			response.BadRequest(c, "invalid client_id")
+			return
+		}
+
+		// Validate redirect_uri
+		allowedURIs := strings.Split(client.RedirectURI, ",")
+		uriValid := false
+		for _, uri := range allowedURIs {
+			if strings.TrimSpace(uri) == redirectURI {
+				uriValid = true
+				break
+			}
+		}
+		if !uriValid {
+			response.BadRequest(c, "invalid redirect_uri")
+			return
+		}
+
+		// Check if user is already logged in (via session or cookie)
+		// For now, redirect to login page with OAuth context
+		loginURL := fmt.Sprintf("/login?oauth=1&client_id=%s&redirect_uri=%s&response_type=%s&scope=%s&state=%s",
+			clientID, redirectURI, responseType, scope, state)
+		c.Redirect(302, loginURL)
+	})
+
+	// POST /oauth/token — Token endpoint (exchange code for tokens)
+	r.POST("/oauth/token", func(c *gin.Context) {
+		if jwtIssuer == nil {
+			response.InternalError(c, "jwt issuer not configured")
+			return
+		}
+
+		grantType := c.PostForm("grant_type")
+		if grantType != "authorization_code" {
+			response.BadRequest(c, "unsupported grant_type")
+			return
+		}
+
+		code := c.PostForm("code")
+		clientID := c.PostForm("client_id")
+		clientSecret := c.PostForm("client_secret")
+		redirectURI := c.PostForm("redirect_uri")
+
+		// Validate client
+		var client OAuthClient
+		if err := database.Where("client_id = ? AND status = ?", clientID, "active").First(&client).Error; err != nil {
+			response.Unauthorized(c, "invalid client")
+			return
+		}
+
+		// Verify client secret
+		if err := password.Verify(clientSecret, client.ClientSecret); err != nil {
+			response.Unauthorized(c, "invalid client_secret")
+			return
+		}
+
+		// Validate authorization code
+		var authCode OAuthAuthorizationCode
+		if err := database.Where("code = ? AND client_id = ? AND used = ?", code, clientID, false).First(&authCode).Error; err != nil {
+			response.BadRequest(c, "invalid or expired code")
+			return
+		}
+
+		// Check expiration
+		if time.Now().After(authCode.ExpiresAt) {
+			response.BadRequest(c, "code expired")
+			return
+		}
+
+		// Validate redirect_uri matches
+		if authCode.RedirectURI != redirectURI {
+			response.BadRequest(c, "redirect_uri mismatch")
+			return
+		}
+
+		// Mark code as used
+		database.Model(&authCode).Update("used", true)
+
+		// Get user
+		var user OASUser
+		if err := database.Where("user_code = ?", authCode.UserID).First(&user).Error; err != nil {
+			response.InternalError(c, "user not found")
+			return
+		}
+
+		// Issue tokens
+		var roles []string
+		if user.RoleCode != "" {
+			roles = []string{user.RoleCode}
+		} else {
+			database.Table("user_roles").
+				Select("r.role_code").
+				Joins("JOIN roles r ON r.id = user_roles.role_id").
+				Where("user_roles.user_id = ?", user.ID).
+				Pluck("r.role_code", &roles)
+		}
+		activeRole := ""
+		if len(roles) > 0 {
+			activeRole = roles[0]
+		}
+
+		claims := &jwt.Claims{
+			UserID:       user.UserCode,
+			IdentityID:   user.UserCode,
+			IdentityType: map[string]string{"H": "human", "N": "nhi"}[user.EntityType],
+			Username:     user.Username,
+			Role:         activeRole,
+			SubRole:      "",
+			NHIFlag:      user.EntityType == "N",
+			MSAccess:     []string{"ams", "cms", "dms", "hms", "fms", "tms", "ems", "gms", "oms", "vms", "ims", "sms"},
+			Roles:        roles,
+			ActiveRole:   activeRole,
+			Domain:       user.Domain,
+			TokenID:      fmt.Sprintf("oauth-%d-%d", user.ID, time.Now().Unix()),
+		}
+
+		accessToken, accessTTL, err := jwtIssuer.IssueAccessToken(claims)
+		if err != nil {
+			response.InternalError(c, "failed to issue access token")
+			return
+		}
+
+		refreshToken, err := jwtIssuer.IssueRefreshToken(user.UserCode, map[string]string{"H": "human", "N": "nhi"}[user.EntityType], claims.TokenID)
+		if err != nil {
+			response.InternalError(c, "failed to issue refresh token")
+			return
+		}
+
+		// Audit log
+		database.Create(&AuditLog{
+			UserID:      user.UserCode,
+			UserName:    user.DisplayName,
+			Plane:       "admin",
+			Action:      "oauth.token",
+			Resource:    "jwt",
+			Detail:      fmt.Sprintf("env=%s, client=%s, grant=authorization_code, role=%s", oasEnv.String(), clientID, activeRole),
+			IP:          c.ClientIP(),
+			UserAgent:   c.Request.UserAgent(),
+			Environment: oasEnv.String(),
+			Domain:      user.Domain,
+		})
+
+		response.OK(c, gin.H{
+			"access_token":  accessToken,
+			"token_type":    "Bearer",
+			"expires_in":    accessTTL,
+			"refresh_token": refreshToken,
+			"id_token":      accessToken, // Simplified: use access_token as id_token
+			"scope":         authCode.Scopes,
+		})
+	})
+
+	// GET /oauth/userinfo — Userinfo endpoint
+	r.GET("/oauth/userinfo", middleware.JWTAuth(jwtVerifier, nil, log), func(c *gin.Context) {
+		userCode, _ := c.Get("user_code")
+		var user OASUser
+		if err := database.Where("user_code = ?", userCode).First(&user).Error; err != nil {
+			response.NotFound(c, "user not found")
+			return
+		}
+
+		response.OK(c, gin.H{
+			"sub":      user.UserCode,
+			"name":     user.DisplayName,
+			"email":    user.Username + "@ziway.eco", // Synthetic email
+			"role":     user.RoleCode,
+			"domain":   user.Domain,
+			"username": user.Username,
+		})
+	})
 
 	// ===== Admin Plane (/admin/*) — 白名单 A: OU/AU/OAM =====
 	if jwtVerifier == nil {
@@ -2474,8 +2856,14 @@ func main() {
 	// ===== Login Page (GET /login) =====
 	r.GET("/login", func(c *gin.Context) {
 		redirect := c.Query("redirect")
+		// OAuth context
+		oauthClientID := c.Query("client_id")
+		oauthRedirectURI := c.Query("redirect_uri")
+		oauthResponseType := c.Query("response_type")
+		oauthScope := c.Query("scope")
+		oauthState := c.Query("state")
 		c.Header("Content-Type", "text/html; charset=utf-8")
-		c.String(200, loginPageHTML(redirect, oasEnv, devTokenEnabled))
+		c.String(200, loginPageHTML(redirect, oasEnv, devTokenEnabled, oauthClientID, oauthRedirectURI, oauthResponseType, oauthScope, oauthState))
 	})
 
 	// ===== GET /admin — OAS Console 管理控制台首页 =====
@@ -4142,7 +4530,7 @@ func seedTestUsers(database *gorm.DB, log *zap.Logger, edition string) {
 }
 
 // loginPageHTML returns the login page HTML.
-func loginPageHTML(redirect string, oasEnv envpolicy.Environment, devTokenEnabled bool) string {
+func loginPageHTML(redirect string, oasEnv envpolicy.Environment, devTokenEnabled bool, oauthClientID, oauthRedirectURI, oauthResponseType, oauthScope, oauthState string) string {
 	quickLoginSection := ""
 	if envpolicy.IsQuickLoginEnabled(oasEnv) {
 		quickLoginSection = `
@@ -4191,6 +4579,11 @@ func loginPageHTML(redirect string, oasEnv envpolicy.Environment, devTokenEnable
 	if redirect != "" {
 		redirectAttr = `data-redirect="` + redirect + `"`
 	}
+	oauthAttrs := ""
+	if oauthClientID != "" {
+		oauthAttrs = fmt.Sprintf(`data-oauth-client="%s" data-oauth-redirect-uri="%s" data-oauth-state="%s"`, 
+			oauthClientID, oauthRedirectURI, oauthState)
+	}
 	return `<!DOCTYPE html>
 <html lang="zh">
 <head>
@@ -4213,7 +4606,7 @@ input:focus{border-color:#2563eb;box-shadow:0 0 0 3px rgba(37,99,235,.1)}
 </style>
 </head>
 <body>
-<div class="card" id="form" ` + redirectAttr + `>
+<div class="card" id="form" ` + redirectAttr + ` ` + oauthAttrs + `>
 	<h1>知味 OAS</h1>
 	<p class="sub">统一身份认证</p>
 	<form onsubmit="return doLogin(event)">
@@ -4251,7 +4644,22 @@ async function quickLogin(role){
 }
 function handleToken(data){
 	const redirect=document.getElementById('form').dataset.redirect;
-	if(redirect){
+	const oauthClientId=document.getElementById('form').dataset.oauthClient;
+	const oauthRedirectUri=document.getElementById('form').dataset.oauthRedirectUri;
+	const oauthState=document.getElementById('form').dataset.oauthState;
+	
+	if(oauthClientId && oauthRedirectUri){
+		// OAuth flow: exchange token for authorization code
+		fetch('/api/v1/oauth/authorize-code',{
+			method:'POST',
+			headers:{'Content-Type':'application/json','Authorization':'Bearer '+data.access_token},
+			body:JSON.stringify({client_id:oauthClientId,redirect_uri:oauthRedirectURI,state:oauthState})
+		}).then(r=>r.json()).then(d=>{
+			if(d.code!==200)throw new Error(d.message||'failed to generate code');
+			const sep=oauthRedirectUri.includes('?')?'&':'?';
+			window.location.href=oauthRedirectUri+sep+'code='+d.data.code+(oauthState?'&state='+oauthState:'');
+		}).catch(ex=>{alert(ex.message);document.getElementById('submitBtn').disabled=false});
+	}else if(redirect){
 		const sep=redirect.includes('?')?'&':'?';
 		window.location.href=redirect+sep+'token='+data.access_token;
 	}else{
