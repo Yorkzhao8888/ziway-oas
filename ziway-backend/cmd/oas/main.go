@@ -1732,8 +1732,8 @@ func main() {
 			}
 
 			var admins []OASUser
-			// Include all admin-level roles: OU, AU, SU
-			database.Where("role_code IN ?", []string{"OU", "AU", "SU"}).Find(&admins)
+			// OAS-CONSOLE-08: 包含所有治理角色：OU/AU/SU/OAM
+			database.Where("role_code IN ?", []string{"OU", "AU", "SU", "OAM"}).Find(&admins)
 			response.OK(c, admins)
 		})
 
@@ -2999,31 +2999,18 @@ func main() {
 			c.Next()
 		})
 
-		// 审计日志 — 白名单 B (OU/AU) 全量 + XAM (T/H/Y/V) 本域 + OAM 不可读
+		// 审计日志 — 白名单 B (OU/AU) 全量，OAM 不可读
+		// OAS-CONSOLE-08: 移除 XAM 域过滤，仅白名单 B 可访问
 		adminAuditLogs.GET("", func(c *gin.Context) {
 			username, _ := c.Get("username")
-			rolesRaw, _ := c.Get("roles")
-			var roles []string
-			if rolesRaw != nil {
-				if rolesSlice, ok := rolesRaw.([]string); ok {
-					roles = rolesSlice
-				} else if rolesStr, ok := rolesRaw.(string); ok && rolesStr != "" {
-					roles = strings.Split(rolesStr, ",")
-				}
-			}
+			// OAS-CONSOLE-08: roles variable removed (no longer needed for XAM filtering)
 
-			// Check access: whitelist B (OU/AU) or XAM roles
+			// Check access: whitelist B (OU/AU) only
+			// OAS-CONSOLE-08: XAM roles no longer have access
 			isWhitelistB := isInAdminWhitelistB(database, username.(string))
-			isXAM := false
-			for _, role := range roles {
-				if role == "TAM" || role == "HAM" || role == "YAM" || role == "VAM" {
-					isXAM = true
-					break
-				}
-			}
 
-			if !isWhitelistB && !isXAM {
-				response.Forbidden(c, "audit logs restricted to OU/AU admin or XAM roles")
+			if !isWhitelistB {
+				response.Forbidden(c, "audit logs restricted to OU/AU admin")
 				return
 			}
 
@@ -3032,17 +3019,16 @@ func main() {
 			size, _ := parseInt(c.DefaultQuery("size", "20"))
 			q := database.Model(&AuditLog{})
 
-			// XAM users can only see their own domain's audit logs
-			if isXAM && !isWhitelistB {
-				domain, _ := c.Get("domain")
-				if domainStr, ok := domain.(string); ok && domainStr != "" {
-					q = q.Where("domain = ?", domainStr)
-				} else {
-					// XAM user without domain should see nothing
-					response.OK(c, gin.H{"items": []AuditLog{}, "total": 0, "page": page, "size": size})
-					return
-				}
-			}
+			// OAS-CONSOLE-08: XAM domain filtering removed
+			// if isXAM && !isWhitelistB {
+			// 	domain, _ := c.Get("domain")
+			// 	if domainStr, ok := domain.(string); ok && domainStr != "" {
+			// 		q = q.Where("domain = ?", domainStr)
+			// 	} else {
+			// 		response.OK(c, gin.H{"items": []AuditLog{}, "total": 0, "page": page, "size": size})
+			// 		return
+			// 	}
+			// }
 
 			if uid := c.Query("user_id"); uid != "" {
 				q = q.Where("user_id = ?", uid)
@@ -4639,16 +4625,17 @@ func isInAdminWhitelistA(db *gorm.DB, username string) bool {
 // canAccessOrgManagement checks if a user can access organization management.
 // Allowed: OU/AU/OAM admins (whitelist A) + XAM roles (TAM/HAM/YAM/VAM).
 func canAccessOrgManagement(db *gorm.DB, username string, roles []string) bool {
-	// Whitelist A users always allowed
+	// OAS-CONSOLE-08: 仅白名单 A 用户可访问组织管理（移除 XAM 角色）
+	// Whitelist A users always allowed (SU/OU/AU/OAM)
 	if isInAdminWhitelistA(db, username) {
 		return true
 	}
-	// XAM roles allowed (will be filtered by DomainFilter)
-	for _, role := range roles {
-		if role == "TAM" || role == "HAM" || role == "YAM" || role == "VAM" {
-			return true
-		}
-	}
+	// XAM roles no longer allowed (frozen in OAS-CONSOLE-08)
+	// for _, role := range roles {
+	// 	if role == "TAM" || role == "HAM" || role == "YAM" || role == "VAM" {
+	// 		return true
+	// 	}
+	// }
 	return false
 }
 
@@ -4674,12 +4661,15 @@ func seedTestUsers(database *gorm.DB, log *zap.Logger, edition string) {
 		RoleCode     string
 		RoleName     string
 	}{
-		{UserCode: "XHPZ#OU-ADMIN", Username: "oas-ou-admin", DisplayName: "OAS 组织管理员", IdentityType: "OU", RoleCode: "SU", RoleName: "System User"},
-		{UserCode: "XHPZ#AU-ADMIN", Username: "oas-au-admin", DisplayName: "OAS 运营管理员", IdentityType: "AU", RoleCode: "AU", RoleName: "AU User"},
-		{UserCode: "XHPZ#OAM-ADMIN", Username: "oas-oam-admin", DisplayName: "OAS 权限执行管理员", IdentityType: "OAM", RoleCode: "OAM", RoleName: "OAM User"},
+		// OAS-CONSOLE-08: 治理帽显示名对齐生态语言
+		{UserCode: "XHPZ#OU-ADMIN", Username: "oas-ou-admin", DisplayName: "系统总管理者", IdentityType: "OU", RoleCode: "SU", RoleName: "System User"},
+		{UserCode: "XHPZ#AU-ADMIN", Username: "oas-au-admin", DisplayName: "系统运营管理者", IdentityType: "AU", RoleCode: "AU", RoleName: "AU User"},
+		{UserCode: "XHPZ#OAM-ADMIN", Username: "oas-oam-admin", DisplayName: "治理审计员", IdentityType: "OAM", RoleCode: "OAM", RoleName: "OAM User"},
+		// OAS-CONSOLE-08: 新增 OU 本人入口（L0 治理看板）
+		{UserCode: "XHPZ#OU-OWNER", Username: "oas-ou-owner", DisplayName: "生态董事长", IdentityType: "OU", RoleCode: "OU", RoleName: "OU User"},
 	}
 
-	// 确保 SU/AU/OAM 角色存在
+	// 确保 SU/AU/OU/OAM 角色存在
 	var suRole OASRole
 	database.Where("role_code = ?", "SU").First(&suRole)
 	if suRole.ID == 0 {
@@ -4692,6 +4682,13 @@ func seedTestUsers(database *gorm.DB, log *zap.Logger, edition string) {
 		auRole = OASRole{RoleCode: "AU", Name: "AU User", Description: "AU User role"}
 		database.Create(&auRole)
 	}
+	// OAS-CONSOLE-08: 新增 OU 角色（生态董事长）
+	var ouRole OASRole
+	database.Where("role_code = ?", "OU").First(&ouRole)
+	if ouRole.ID == 0 {
+		ouRole = OASRole{RoleCode: "OU", Name: "OU User", Description: "Organization Unit User role"}
+		database.Create(&ouRole)
+	}
 	var oamRole OASRole
 	database.Where("role_code = ?", "OAM").First(&oamRole)
 	if oamRole.ID == 0 {
@@ -4699,33 +4696,34 @@ func seedTestUsers(database *gorm.DB, log *zap.Logger, edition string) {
 		database.Create(&oamRole)
 	}
 
-	// Seed XAM 域管理角色（TAM/HAM/YAM/VAM）
-	xamRoles := []struct {
-		Code        string
-		Name        string
-		Description string
-		Permissions string
-	}{
-		{Code: "TAM", Name: "Technology Admin", Description: "技术域管理员", Permissions: `["tam:org:read","tam:org:manage","tam:member:read","tam:member:manage"]`},
-		{Code: "HAM", Name: "HR Admin", Description: "人资云管理员", Permissions: `["ham:org:read","ham:org:manage","ham:member:read","ham:member:manage"]`},
-		{Code: "YAM", Name: "Smart Plaza Admin", Description: "智场域管理员", Permissions: `["yam:org:read","yam:org:manage","yam:member:read","yam:member:manage"]`},
-		{Code: "VAM", Name: "Operations Admin", Description: "运营域管理员", Permissions: `["vam:org:read","vam:org:manage","vam:member:read","vam:member:manage"]`},
-	}
-	for _, xr := range xamRoles {
-		var existing OASRole
-		database.Where("role_code = ?", xr.Code).First(&existing)
-		if existing.ID == 0 {
-			role := OASRole{
-				RoleCode:    xr.Code,
-				Name:        xr.Name,
-				Description: xr.Description,
-				Permissions: xr.Permissions,
-			}
-			if err := database.Create(&role).Error; err == nil {
-				log.Info("XAM role created", zap.String("role_code", xr.Code))
-			}
-		}
-	}
+	// OAS-CONSOLE-08: 冻结 XAM 域管理角色 seed（TAM/HAM/YAM/VAM）
+	// 已存在的 XAM 角色保留，但不再创建新角色
+	// xamRoles := []struct {
+	// 	Code        string
+	// 	Name        string
+	// 	Description string
+	// 	Permissions string
+	// }{
+	// 	{Code: "TAM", Name: "Technology Admin", Description: "技术域管理员", Permissions: `["tam:org:read","tam:org:manage","tam:member:read","tam:member:manage"]`},
+	// 	{Code: "HAM", Name: "HR Admin", Description: "人资云管理员", Permissions: `["ham:org:read","ham:org:manage","ham:member:read","ham:member:manage"]`},
+	// 	{Code: "YAM", Name: "Smart Plaza Admin", Description: "智场域管理员", Permissions: `["yam:org:read","yam:org:manage","yam:member:read","yam:member:manage"]`},
+	// 	{Code: "VAM", Name: "Operations Admin", Description: "运营域管理员", Permissions: `["vam:org:read","vam:org:manage","vam:member:read","vam:member:manage"]`},
+	// }
+	// for _, xr := range xamRoles {
+	// 	var existing OASRole
+	// 	database.Where("role_code = ?", xr.Code).First(&existing)
+	// 	if existing.ID == 0 {
+	// 		role := OASRole{
+	// 			RoleCode:    xr.Code,
+	// 			Name:        xr.Name,
+	// 			Description: xr.Description,
+	// 			Permissions: xr.Permissions,
+	// 		}
+	// 		if err := database.Create(&role).Error; err == nil {
+	// 			log.Info("XAM role created", zap.String("role_code", xr.Code))
+	// 		}
+	// 	}
+	// }
 
 	// 创建管理员账号（如果不存在）
 	for _, acc := range adminAccounts {
@@ -4766,6 +4764,24 @@ func seedTestUsers(database *gorm.DB, log *zap.Logger, edition string) {
 			if existingAssignment.RoleID != targetRole.ID {
 				database.Model(&existingAssignment).Update("role_id", targetRole.ID)
 				log.Info("admin user role updated", zap.String("username", acc.Username), zap.Uint64("role_id", targetRole.ID))
+			}
+		}
+	}
+
+	// OAS-CONSOLE-08: 禁用现有 XAM 域管理账号（TAM/HAM/YAM/VAM）
+	// 不物理删除，仅设置 status=disabled
+	xamRoleCodes := []string{"TAM", "HAM", "YAM", "VAM"}
+	for _, roleCode := range xamRoleCodes {
+		// 查找该角色对应的 role_id
+		var xamRole OASRole
+		if err := database.Where("role_code = ?", roleCode).First(&xamRole).Error; err == nil {
+			// 查找该角色下的所有用户
+			var xamAssignments []OASUserRole
+			database.Where("role_id = ?", xamRole.ID).Find(&xamAssignments)
+			for _, assignment := range xamAssignments {
+				// 禁用用户
+				database.Model(&OASUser{}).Where("id = ?", assignment.UserID).Update("status", "disabled")
+				log.Info("XAM user disabled", zap.Uint64("user_id", assignment.UserID), zap.String("role_code", roleCode))
 			}
 		}
 	}
