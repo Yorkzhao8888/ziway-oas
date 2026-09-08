@@ -779,7 +779,16 @@ func main() {
 			}
 
 			// Get user from JWT
-			userID, _ := c.Get("user_id")
+			userIDVal, exists := c.Get("user_id")
+			if !exists {
+				response.InternalError(c, "user_id not found in context")
+				return
+			}
+			userID, ok := userIDVal.(string)
+			if !ok || userID == "" {
+				response.InternalError(c, "invalid user_id in context")
+				return
+			}
 			var user OASUser
 			if err := database.Where("user_code = ?", userID).First(&user).Error; err != nil {
 				response.InternalError(c, "user not found")
