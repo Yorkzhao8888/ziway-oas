@@ -4561,7 +4561,19 @@ func loginPageHTML(redirect string, oasEnv envpolicy.Environment, devTokenEnable
 				<button onclick="quickLogin('GU')" style="padding:6px 14px;border:1px solid #d1d5db;border-radius:6px;background:#f9fafb;cursor:pointer;font-size:13px">GU 访客</button>
 				<button onclick="quickLogin('EM')" style="padding:6px 14px;border:1px solid #d1d5db;border-radius:6px;background:#f9fafb;cursor:pointer;font-size:13px">EM 供给</button>
 			</div>
-		</div>`
+		</div>
+		<script>
+		async function quickLogin(role){
+			const btn=document.getElementById('submitBtn');
+			btn.disabled=true;
+			try{
+				const r=await fetch('/api/v1/auth/quick-login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({role})});
+				const d=await r.json();
+				if(d.code!==200)throw new Error(d.message||'quick login failed');
+				handleToken(d.data);
+			}catch(ex){alert(ex.message);btn.disabled=false}
+		}
+		</script>`
 	}
 	devTokenSection := ""
 	if devTokenEnabled {
@@ -4591,7 +4603,40 @@ func loginPageHTML(redirect string, oasEnv envpolicy.Environment, devTokenEnable
 				</div>
 				<p id="devTokenInfo" style="font-size:11px;color:#6b7280;margin-top:8px"></p>
 			</div>
-		</div>`
+		</div>
+		<script>
+		let devTokenValue='';
+		async function genDevToken(){
+			const role=document.getElementById('devTokenRole').value;
+			if(!role){alert('请选择角色');return}
+			try{
+				const r=await fetch('/api/v1/auth/dev-token',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({role,expires_minutes:30})});
+				const d=await r.json();
+				if(d.code!==200)throw new Error(d.message||'dev-token failed');
+				devTokenValue=d.data.token;
+				document.getElementById('devTokenText').value=devTokenValue;
+				document.getElementById('devTokenResult').style.display='block';
+				document.getElementById('devTokenInfo').textContent='角色: '+d.data.role+' | 用户: '+d.data.username+' | 过期: '+new Date(d.data.expires_at).toLocaleString();
+				const redirect=document.getElementById('form').dataset.redirect;
+				if(redirect){
+					document.getElementById('devTokenRedirectBtn').style.display='block';
+				}
+			}catch(ex){alert(ex.message)}
+		}
+		function copyDevToken(){
+			navigator.clipboard.writeText(devTokenValue).then(()=>alert('已复制')).catch(()=>{
+				const ta=document.getElementById('devTokenText');
+				ta.select();document.execCommand('copy');alert('已复制');
+			});
+		}
+		function redirectWithDevToken(){
+			const redirect=document.getElementById('form').dataset.redirect;
+			if(redirect){
+				const sep=redirect.includes('?')?'&':'?';
+				window.location.href=redirect+sep+'token='+devTokenValue;
+			}
+		}
+		</script>`
 	}
 	redirectAttr := ""
 	if redirect != "" {
@@ -4650,16 +4695,6 @@ async function doLogin(e){
 		handleToken(d.data);
 	}catch(ex){err.textContent=ex.message;err.style.display='block';btn.disabled=false}
 }
-async function quickLogin(role){
-	const btn=document.getElementById('submitBtn');
-	btn.disabled=true;
-	try{
-		const r=await fetch('/api/v1/auth/quick-login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({role})});
-		const d=await r.json();
-		if(d.code!==200)throw new Error(d.message||'quick login failed');
-		handleToken(d.data);
-	}catch(ex){alert(ex.message);btn.disabled=false}
-}
 function handleToken(data){
 	const redirect=document.getElementById('form').dataset.redirect;
 	const oauthClientId=document.getElementById('form').dataset.oauthClient;
@@ -4682,37 +4717,6 @@ function handleToken(data){
 		window.location.href=redirect+sep+'token='+data.access_token;
 	}else{
 		document.getElementById('form').innerHTML='<h1>登录成功</h1><p class="sub">角色: '+data.role+'</p><pre style="font-size:11px;word-break:break-all;background:#f9fafb;padding:12px;border-radius:8px;margin-top:12px;max-height:200px;overflow:auto">'+data.access_token+'</pre><p style="margin-top:12px;font-size:13px;color:#6b7280">Token 有效期: '+data.expires_in+'s</p>';
-	}
-}
-let devTokenValue='';
-async function genDevToken(){
-	const role=document.getElementById('devTokenRole').value;
-	if(!role){alert('请选择角色');return}
-	try{
-		const r=await fetch('/api/v1/auth/dev-token',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({role,expires_minutes:30})});
-		const d=await r.json();
-		if(d.code!==200)throw new Error(d.message||'dev-token failed');
-		devTokenValue=d.data.token;
-		document.getElementById('devTokenText').value=devTokenValue;
-		document.getElementById('devTokenResult').style.display='block';
-		document.getElementById('devTokenInfo').textContent='角色: '+d.data.role+' | 用户: '+d.data.username+' | 过期: '+new Date(d.data.expires_at).toLocaleString();
-		const redirect=document.getElementById('form').dataset.redirect;
-		if(redirect){
-			document.getElementById('devTokenRedirectBtn').style.display='block';
-		}
-	}catch(ex){alert(ex.message)}
-}
-function copyDevToken(){
-	navigator.clipboard.writeText(devTokenValue).then(()=>alert('已复制')).catch(()=>{
-		const ta=document.getElementById('devTokenText');
-		ta.select();document.execCommand('copy');alert('已复制');
-	});
-}
-function redirectWithDevToken(){
-	const redirect=document.getElementById('form').dataset.redirect;
-	if(redirect){
-		const sep=redirect.includes('?')?'&':'?';
-		window.location.href=redirect+sep+'token='+devTokenValue;
 	}
 }
 </script>

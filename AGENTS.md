@@ -72,7 +72,7 @@ ziway-backend/
 - JWT context 键为 `user_id`（非 `user_code`），提取时需类型断言：`userID, ok := userIDVal.(string)`
 - 开发环境启动需清除平台注入的 `ZIWAY_DATABASE_DRIVER` 和 `ZIWAY_DATABASE_DSN`，否则会使用 PostgreSQL 而非 SQLite
 - OAS-SEC-01 安全闭环：生产域（OAS_ENV=PROD）三便利端点（quick-login/dev-token/test-accounts）必须 404，登录页隐藏开发入口
-- 登录页 JS 保留 genDevToken/quickLogin 函数定义但无 UI 容器触发（P2 待清理死代码）
+- 登录页 JS 按环境条件渲染：quickLogin/genDevToken 等函数仅在 BETA/DEV 模式的独立 `<script>` 块中定义，PROD 模式整段不渲染
 
 ## OAS Console 治理平面功能
 
