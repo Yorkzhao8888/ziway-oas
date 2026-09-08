@@ -284,7 +284,50 @@ func Register(r *gin.Engine) {
 		// Add member to organization
 		adminOrgs.POST("/:id/members", handlers.H.AddOrgMember)
 
-		// Remove member from organization
-		adminOrgs.DELETE("/:id/members/:userId", handlers.H.RemoveOrgMember)
 	}
+
+	// ===== 页面路由（OAS-CONSOLE-09 A2 自 main.go 收口；注册顺序不影响静态路径匹配）=====
+	// ===== Login Page (GET /login) =====
+	r.GET("/login", handlers.H.PageLogin)
+
+	// ===== GET /admin — OAS Console 管理控制台首页 =====
+	// Requires JWT + whitelist A (OU/AU/OAM)
+	r.GET("/admin", handlers.H.PageConsoleHome)
+
+	// ===== GET /admin/overview — OU 治理看板 =====
+	// Requires JWT + whitelist A (OU/AU/OAM)
+	r.GET("/admin/overview", handlers.H.PageOverview)
+
+	// ===== GET /admin/approvals — 战略审批工作台（白名单 A：OU/AU/OAM，OAM 只读）=====
+	r.GET("/admin/approvals", handlers.H.PageApprovals)
+
+	// ===== GET /admin/ownership — 所有权视图（白名单 A）=====
+	r.GET("/admin/ownership", handlers.H.PageOwnership)
+
+	// Admin 账号管理页面（仅 OU/AU）
+	r.GET("/admin/admin-accounts", handlers.H.PageAdminAccounts)
+
+	// 系统配置只读面板（仅 OU/AU）
+	r.GET("/admin/system-config", handlers.H.PageSystemConfig)
+
+	// API Key 管理页面（仅 OU/AU）
+	r.GET("/admin/api-keys", handlers.H.PageAPIKeys)
+
+	// 联邦节点管理页面（仅 OU/AU）
+	r.GET("/admin/federation-nodes", handlers.H.PageFederationNodes)
+
+	// ===== GET /admin/oauth-clients — OAuth 客户端管理页面（白名单 B：仅 OU/AU）=====
+	r.GET("/admin/oauth-clients", handlers.H.PageOAuthClients)
+
+	// ===== GET /admin/audit-logs — 审计日志页面（白名单 B：仅 2 admin）=====
+	r.GET("/admin/audit-logs", handlers.H.PageAuditLogs)
+
+	// ===== User Management Page (GET /admin/users) — JWT required =====
+	r.GET("/admin/users", handlers.H.PageUsers)
+
+	// ===== Role Management Page (GET /admin/roles) — JWT required =====
+	r.GET("/admin/roles", handlers.H.PageRoles)
+
+	// ===== Organization Management Page (GET /admin/orgs) — JWT required =====
+	r.GET("/admin/orgs", handlers.H.PageOrgs)
 }

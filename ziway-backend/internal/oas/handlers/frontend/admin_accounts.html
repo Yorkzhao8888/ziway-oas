@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Admin 账号管理 - OAS Console</title>
+<style>
+body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; margin: 0; padding: 20px; background: #f5f5f5; }
+.container { max-width: 1200px; margin: 0 auto; }
+h1 { color: #333; margin-bottom: 20px; }
+.card { background: white; border-radius: 8px; padding: 20px; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+table { width: 100%; border-collapse: collapse; }
+th, td { padding: 12px; text-align: left; border-bottom: 1px solid #eee; }
+th { background: #f9f9f9; font-weight: 600; }
+.btn { padding: 6px 12px; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; }
+.btn-primary { background: #007bff; color: white; }
+.btn-danger { background: #dc3545; color: white; }
+.btn-success { background: #28a745; color: white; }
+.btn:hover { opacity: 0.9; }
+.status-active { color: #28a745; }
+.status-disabled { color: #dc3545; }
+</style>
+</head>
+<body>
+<div class="container">
+<h1>Admin 账号管理</h1>
+<div class="card">
+<button class="btn btn-primary" onclick="showCreateDialog()">创建 Admin 账号</button>
+</div>
+<div class="card">
+<table id="accountsTable">
+<thead>
+<tr>
+  <th>ID</th>
+  <th>用户名</th>
+  <th>用户编码</th>
+  <th>显示名</th>
+  <th>角色</th>
+  <th>状态</th>
+  <th>操作</th>
+</tr>
+</thead>
+<tbody id="accountsBody"></tbody>
+</table>
+</div>
+</div>
+
+<script>
+const token = new URLSearchParams(window.location.search).get('token');
+
+async function loadAccounts() {
+  try {
+    const res = await fetch('/api/v1/admin/admin-accounts', {
+      headers: { 'Authorization': 'Bearer ' + token }
+    });
+    if (!res.ok) throw new Error('加载失败');
+    const data = await res.json();
+    const tbody = document.getElementById('accountsBody');
+    tbody.innerHTML = '';
+    data.forEach(function(acc) {
+      const row = document.createElement('tr');
+      row.innerHTML = 
+        '<td>' + acc.id + '</td>' +
+        '<td>' + acc.username + '</td>' +
+        '<td>' + acc.user_code + '</td>' +
+        '<td>' + (acc.display_name || '-') + '</td>' +
+        '<td>' + acc.role_code + '</td>' +
+        '<td class="status-' + acc.status + '">' + acc.status + '</td>' +
+        '<td>' +
+          (acc.status === 'active' 
+            ? '<button class="btn btn-danger" onclick="disableAccount(' + acc.id + ')">禁用</button>'
+            : '<button class="btn btn-success" onclick="enableAccount(' + acc.id + ')">启用</button>') +
+          ' <button class="btn btn-primary" onclick="resetPassword(' + acc.id + ')">重置密码</button>' +
+        '</td>';
+      tbody.appendChild(row);
+    });
+  } catch (err) {
+    alert('加载失败: ' + err.message);
+  }
+}
+
+function showCreateDialog() {
+  const username = prompt('用户名:');
+  if (!username) return;
+  const password = prompt('密码:');
+  if (!password) return;
+  const displayName = prompt('显示名:');
+  const roleCode = prompt('角色 (OU/AU):');
+  if (roleCode !== 'OU' && roleCode !== 'AU') {
+    alert('角色必须是 OU 或 AU');
+    return;
+  }
+  
+  fetch('/api/v1/admin/admin-accounts', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': 'Bearer ' + token
+    },
+    body: JSON.stringify({
+      username: username,
+      password: password,
+      display_name: displayName,
+      role_code: roleCode
+    })
+  }).then(function(res) {
+    if (!res.ok) throw new Error('创建失败');
+    alert('创建成功');
+    loadAccounts();
+  }).catch(function(err) {
+    alert('创建失败: ' + err.message);
+  });
+}
+
+function disableAccount(id) {
+  if (!confirm('确认禁用此账号？')) return;
+  fetch('/api/v1/admin/admin-accounts/' + id + '/disable', {
+    method: 'PUT',
+    headers: { 'Authorization': 'Bearer ' + token }
+  }).then(function(res) {
+    if (!res.ok) throw new Error('禁用失败');
+    alert('禁用成功');
+    loadAccounts();
+  }).catch(function(err) {
+    alert('禁用失败: ' + err.message);
+  });
+}
+
+function enableAccount(id) {
+  fetch('/api/v1/admin/admin-accounts/' + id + '/enable', {
+    method: 'PUT',
+    headers: { 'Authorization': 'Bearer ' + token }
+  }).then(function(res) {
+    if (!res.ok) throw new Error('启用失败');
+    alert('启用成功');
+    loadAccounts();
+  }).catch(function(err) {
+    alert('启用失败: ' + err.message);
+  });
+}
+
+function resetPassword(id) {
+  const newPassword = prompt('新密码:');
+  if (!newPassword) return;
+  
+  fetch('/api/v1/admin/admin-accounts/' + id + '/reset-password', {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': 'Bearer ' + token
+    },
+    body: JSON.stringify({ new_password: newPassword })
+  }).then(function(res) {
+    if (!res.ok) throw new Error('重置失败');
+    alert('密码重置成功');
+  }).catch(function(err) {
+    alert('重置失败: ' + err.message);
+  });
+}
+
+loadAccounts();
+</script>
+</body>
+</html>

@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>OAS Console - 组织管理</title>
+<script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-50">
+<div class="max-w-7xl mx-auto px-4 py-8">
+	<div class="mb-6">
+		<a href="/admin" class="text-blue-600 hover:underline">← 返回 Console</a>
+	</div>
+	<div class="bg-white rounded-lg shadow p-6">
+		<h1 class="text-2xl font-bold mb-6">组织管理</h1>
+		<div class="mb-4">
+			<button onclick="showCreateModal()" class="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700">新增组织</button>
+		</div>
+		<table class="w-full">
+			<thead class="bg-gray-100">
+				<tr>
+					<th class="px-4 py-2 text-left">组织编码</th>
+					<th class="px-4 py-2 text-left">组织名称</th>
+					<th class="px-4 py-2 text-left">域</th>
+					<th class="px-4 py-2 text-left">状态</th>
+					<th class="px-4 py-2 text-left">操作</th>
+				</tr>
+			</thead>
+			<tbody id="orgTable"></tbody>
+		</table>
+	</div>
+</div>
+
+<!-- Create/Edit Modal -->
+<div id="modal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center">
+	<div class="bg-white rounded-lg p-6 w-96">
+		<h2 id="modalTitle" class="text-xl font-bold mb-4">新增组织</h2>
+		<input type="hidden" id="editId">
+		<div class="mb-3">
+			<label class="block text-sm mb-1">组织编码</label>
+			<input id="orgCode" class="w-full border rounded px-3 py-2" placeholder="如 TAM-DEV">
+		</div>
+		<div class="mb-3">
+			<label class="block text-sm mb-1">组织名称</label>
+			<input id="orgName" class="w-full border rounded px-3 py-2" placeholder="如 技术域研发中心">
+		</div>
+		<div class="mb-3">
+			<label class="block text-sm mb-1">描述</label>
+			<textarea id="orgDesc" class="w-full border rounded px-3 py-2" rows="2"></textarea>
+		</div>
+		<div class="mb-3">
+			<label class="block text-sm mb-1">所属域</label>
+			<select id="orgDomain" class="w-full border rounded px-3 py-2">
+				<option value="">请选择</option>
+				<option value="T">T - 技术域 (TAM)</option>
+				<option value="H">H - 人资域 (HAM)</option>
+				<option value="Y">Y - 智场域 (YAM)</option>
+				<option value="O">O - 经营域 (OAM)</option>
+				<option value="A">A - 行政域 (AU-admin)</option>
+				<option value="F">F - 财务域 (FAM)</option>
+				<option value="V">V - 商务域 (VAM)</option>
+				<option value="G">G - 治理域 (GAM)</option>
+			</select>
+		</div>
+		<div class="mb-3">
+			<label class="block text-sm mb-1">父组织 ID（可选）</label>
+			<input id="orgParent" type="number" class="w-full border rounded px-3 py-2" placeholder="留空表示顶级组织">
+		</div>
+		<div class="flex justify-end gap-2">
+			<button onclick="closeModal()" class="px-4 py-2 border rounded">取消</button>
+			<button onclick="saveOrg()" class="px-4 py-2 bg-blue-600 text-white rounded">保存</button>
+		</div>
+	</div>
+</div>
+
+<script>
+const API='/api/v1';
+let orgs=[];
+
+async function loadOrgs(){
+	const r=await fetch(API+'/admin/orgs');
+	const d=await r.json();
+	if(d.code!==200){alert(d.message||'load failed');return}
+	orgs=d.data.items;
+	renderOrgs(orgs);
+}
+
+function renderOrgs(items){
+	if(!items||items.length===0){
+		document.getElementById('orgTable').innerHTML='<tr><td colspan="5" class="text-center py-8 text-gray-400">暂无数据</td></tr>';
+		return;
+	}
+	let html='';
+	for(const org of items){
+		const statusBadge=org.status==='active'?'<span class="bg-green-100 text-green-800 px-2 py-1 rounded text-xs">active</span>':'<span class="bg-gray-100 text-gray-800 px-2 py-1 rounded text-xs">inactive</span>';
+		html+='<tr class="border-b hover:bg-gray-50">';
+		html+='<td class="px-4 py-3 font-mono text-sm">'+org.code+'</td>';
+		html+='<td class="px-4 py-3">'+org.name+'</td>';
+		html+='<td class="px-4 py-3 text-sm">'+(org.domain||'-')+'</td>';
+		html+='<td class="px-4 py-3">'+statusBadge+'</td>';
+		html+='<td class="px-4 py-3">';
+		html+='<button onclick="editOrg('+org.id+')" class="text-blue-600 hover:underline mr-2">编辑</button>';
+		html+='<button onclick="viewMembers('+org.id+',\''+org.code+'\')" class="text-green-600 hover:underline mr-2">成员</button>';
+		html+='<button onclick="deleteOrg('+org.id+',\''+org.code+'\')" class="text-red-600 hover:underline">删除</button>';
+		html+='</td>';
+		html+='</tr>';
+		// Render children if any
+		if(org.children&&org.children.length>0){
+			for(const child of org.children){
+				const childStatus=child.status==='active'?'<span class="bg-green-100 text-green-800 px-2 py-1 rounded text-xs">active</span>':'<span class="bg-gray-100 text-gray-800 px-2 py-1 rounded text-xs">inactive</span>';
+				html+='<tr class="border-b hover:bg-gray-50 bg-gray-50">';
+				html+='<td class="px-4 py-3 pl-8 font-mono text-sm text-gray-600">└ '+child.code+'</td>';
+				html+='<td class="px-4 py-3 text-gray-600">'+child.name+'</td>';
+				html+='<td class="px-4 py-3 text-sm">'+(child.domain||'-')+'</td>';
+				html+='<td class="px-4 py-3">'+childStatus+'</td>';
+				html+='<td class="px-4 py-3">';
+				html+='<button onclick="editOrg('+child.id+')" class="text-blue-600 hover:underline mr-2">编辑</button>';
+				html+='<button onclick="viewMembers('+child.id+',\''+child.code+'\')" class="text-green-600 hover:underline mr-2">成员</button>';
+				html+='<button onclick="deleteOrg('+child.id+',\''+child.code+'\')" class="text-red-600 hover:underline">删除</button>';
+				html+='</td>';
+				html+='</tr>';
+			}
+		}
+	}
+	document.getElementById('orgTable').innerHTML=html;
+}
+
+function showCreateModal(){
+	document.getElementById('modalTitle').textContent='新增组织';
+	document.getElementById('editId').value='';
+	document.getElementById('orgCode').value='';
+	document.getElementById('orgCode').disabled=false;
+	document.getElementById('orgName').value='';
+	document.getElementById('orgDesc').value='';
+	document.getElementById('orgDomain').value='';
+	document.getElementById('orgParent').value='';
+	document.getElementById('modal').classList.remove('hidden');
+}
+
+function editOrg(id){
+	const org=orgs.find(o=>o.id===id);
+	if(!org)return;
+	document.getElementById('modalTitle').textContent='编辑组织';
+	document.getElementById('editId').value=id;
+	document.getElementById('orgCode').value=org.code;
+	document.getElementById('orgCode').disabled=true;
+	document.getElementById('orgName').value=org.name;
+	document.getElementById('orgDesc').value=org.description||'';
+	document.getElementById('orgDomain').value=org.domain||'';
+	document.getElementById('orgParent').value=org.parent_id||'';
+	document.getElementById('modal').classList.remove('hidden');
+}
+
+function closeModal(){
+	document.getElementById('modal').classList.add('hidden');
+}
+
+async function saveOrg(){
+	const id=document.getElementById('editId').value;
+	const data={
+		name:document.getElementById('orgName').value,
+		description:document.getElementById('orgDesc').value,
+		domain:document.getElementById('orgDomain').value,
+		parent_id:document.getElementById('orgParent').value?parseInt(document.getElementById('orgParent').value):null
+	};
+	if(!id){
+		data.code=document.getElementById('orgCode').value;
+		if(!data.code){alert('请输入组织编码');return}
+		const r=await fetch(API+'/admin/orgs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});
+		const d=await r.json();
+		if(d.code!==201){alert(d.message||'create failed');return}
+	}else{
+		const r=await fetch(API+'/admin/orgs/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});
+		const d=await r.json();
+		if(d.code!==200){alert(d.message||'update failed');return}
+	}
+	closeModal();
+	loadOrgs();
+}
+
+async function deleteOrg(id,code){
+	if(!confirm('确认删除组织 '+code+'？'))return;
+	const r=await fetch(API+'/admin/orgs/'+id,{method:'DELETE'});
+	const d=await r.json();
+	if(d.code!==200){alert(d.message||'delete failed');return}
+	loadOrgs();
+}
+
+async function viewMembers(id,code){
+	alert('成员管理功能待实现（1b-3 域过滤中间件完成后）');
+}
+
+loadOrgs();
+</script>
+</body>
+</html>

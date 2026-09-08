@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>API Key 管理 - OAS Console</title>
+<style>
+body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; margin: 0; padding: 20px; background: #f5f5f5; }
+.container { max-width: 1200px; margin: 0 auto; }
+h1 { color: #333; margin-bottom: 20px; }
+.card { background: white; border-radius: 8px; padding: 20px; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+table { width: 100%; border-collapse: collapse; }
+th, td { padding: 12px; text-align: left; border-bottom: 1px solid #eee; }
+th { background: #f9f9f9; font-weight: 600; }
+.btn { padding: 6px 12px; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; margin-right: 5px; }
+.btn-primary { background: #007bff; color: white; }
+.btn-danger { background: #dc3545; color: white; }
+.btn-success { background: #28a745; color: white; }
+.btn-warning { background: #ffc107; color: #333; }
+.btn:hover { opacity: 0.9; }
+.status-active { color: #28a745; font-weight: 600; }
+.status-disabled { color: #dc3545; font-weight: 600; }
+.key-display { font-family: monospace; background: #f8f9fa; padding: 8px; border-radius: 4px; word-break: break-all; }
+</style>
+</head>
+<body>
+<div class="container">
+<h1>API Key 管理</h1>
+<div class="card">
+<button class="btn btn-primary" onclick="showCreateDialog()">创建 API Key</button>
+</div>
+<div class="card">
+<table id="keysTable">
+<thead>
+<tr>
+  <th>ID</th>
+  <th>名称</th>
+  <th>前缀</th>
+  <th>权限范围</th>
+  <th>过期时间</th>
+  <th>状态</th>
+  <th>创建者</th>
+  <th>操作</th>
+</tr>
+</thead>
+<tbody id="keysBody"></tbody>
+</table>
+</div>
+</div>
+
+<script>
+const token = new URLSearchParams(window.location.search).get('token');
+
+async function loadKeys() {
+  try {
+    const res = await fetch('/api/v1/admin/api-keys', {
+      headers: { 'Authorization': 'Bearer ' + token }
+    });
+    if (!res.ok) throw new Error('加载失败');
+    const data = await res.json();
+    const tbody = document.getElementById('keysBody');
+    tbody.innerHTML = '';
+    data.forEach(function(key) {
+      const row = document.createElement('tr');
+      row.innerHTML = 
+        '<td>' + key.id + '</td>' +
+        '<td>' + key.key_name + '</td>' +
+        '<td class="key-display">' + key.key_prefix + '</td>' +
+        '<td>' + (key.scopes || '-') + '</td>' +
+        '<td>' + (key.expires_at ? new Date(key.expires_at).toLocaleString() : '永不过期') + '</td>' +
+        '<td class="status-' + key.status + '">' + key.status + '</td>' +
+        '<td>' + key.created_by + '</td>' +
+        '<td>' +
+          '<button class="btn btn-warning" onclick="rotateKey(' + key.id + ')">轮换</button>' +
+          (key.status === 'active' 
+            ? '<button class="btn btn-danger" onclick="disableKey(' + key.id + ')">禁用</button>'
+            : '<button class="btn btn-success" onclick="enableKey(' + key.id + ')">启用</button>') +
+          '<button class="btn btn-danger" onclick="deleteKey(' + key.id + ')">删除</button>' +
+        '</td>';
+      tbody.appendChild(row);
+    });
+  } catch (err) {
+    alert('加载失败: ' + err.message);
+  }
+}
+
+function showCreateDialog() {
+  const keyName = prompt('密钥名称:');
+  if (!keyName) return;
+  const scopes = prompt('权限范围 (如: read:all,write:domain1):');
+  const expiresAt = prompt('过期时间 (ISO 格式，留空表示永不过期):');
+  
+  const body = { key_name: keyName, scopes: scopes };
+  if (expiresAt) body.expires_at = expiresAt;
+  
+  fetch('/api/v1/admin/api-keys', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': 'Bearer ' + token
+    },
+    body: JSON.stringify(body)
+  }).then(function(res) {
+    if (!res.ok) throw new Error('创建失败');
+    return res.json();
+  }).then(function(data) {
+    alert('创建成功！请立即保存密钥（只显示一次）：\n\n' + data.full_key);
+    loadKeys();
+  }).catch(function(err) {
+    alert('创建失败: ' + err.message);
+  });
+}
+
+function rotateKey(id) {
+  if (!confirm('确认轮换此密钥？旧密钥将立即失效。')) return;
+  
+  fetch('/api/v1/admin/api-keys/' + id + '/rotate', {
+    method: 'PUT',
+    headers: { 'Authorization': 'Bearer ' + token }
+  }).then(function(res) {
+    if (!res.ok) throw new Error('轮换失败');
+    return res.json();
+  }).then(function(data) {
+    alert('轮换成功！新密钥（只显示一次）：\n\n' + data.full_key + '\n\n旧密钥 ID: ' + data.old_key_id + ' 已禁用。');
+    loadKeys();
+  }).catch(function(err) {
+    alert('轮换失败: ' + err.message);
+  });
+}
+
+function disableKey(id) {
+  if (!confirm('确认禁用此密钥？')) return;
+  
+  fetch('/api/v1/admin/api-keys/' + id + '/disable', {
+    method: 'PUT',
+    headers: { 'Authorization': 'Bearer ' + token }
+  }).then(function(res) {
+    if (!res.ok) throw new Error('禁用失败');
+    alert('禁用成功');
+    loadKeys();
+  }).catch(function(err) {
+    alert('禁用失败: ' + err.message);
+  });
+}
+
+function enableKey(id) {
+  fetch('/api/v1/admin/api-keys/' + id + '/enable', {
+    method: 'PUT',
+    headers: { 'Authorization': 'Bearer ' + token }
+  }).then(function(res) {
+    if (!res.ok) throw new Error('启用失败');
+    alert('启用成功');
+    loadKeys();
+  }).catch(function(err) {
+    alert('启用失败: ' + err.message);
+  });
+}
+
+function deleteKey(id) {
+  if (!confirm('确认删除此密钥？此操作不可恢复。')) return;
+  
+  fetch('/api/v1/admin/api-keys/' + id, {
+    method: 'DELETE',
+    headers: { 'Authorization': 'Bearer ' + token }
+  }).then(function(res) {
+    if (!res.ok) throw new Error('删除失败');
+    alert('删除成功');
+    loadKeys();
+  }).catch(function(err) {
+    alert('删除失败: ' + err.message);
+  });
+}
+
+loadKeys();
+</script>
+</body>
+</html>

@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>OAS Console - 角色权限管理</title>
+<script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-50">
+<div class="max-w-7xl mx-auto px-4 py-8">
+	<div class="mb-6">
+		<a href="/admin" class="text-blue-600 hover:underline">← 返回 Console</a>
+	</div>
+	<div class="bg-white rounded-lg shadow p-6">
+		<h1 class="text-2xl font-bold mb-6">角色权限管理</h1>
+		<div class="mb-4">
+			<button onclick="showCreateModal()" class="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700">新增角色</button>
+		</div>
+		<table class="w-full">
+			<thead class="bg-gray-100">
+				<tr>
+					<th class="px-4 py-2 text-left">角色编码</th>
+					<th class="px-4 py-2 text-left">角色名称</th>
+					<th class="px-4 py-2 text-left">描述</th>
+					<th class="px-4 py-2 text-left">权限点</th>
+					<th class="px-4 py-2 text-left">操作</th>
+				</tr>
+			</thead>
+			<tbody id="roleTable"></tbody>
+		</table>
+	</div>
+</div>
+
+<!-- Create/Edit Modal -->
+<div id="modal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center">
+	<div class="bg-white rounded-lg p-6 w-96">
+		<h2 id="modalTitle" class="text-xl font-bold mb-4">新增角色</h2>
+		<input type="hidden" id="editId">
+		<div class="mb-3">
+			<label class="block text-sm mb-1">角色编码</label>
+			<input id="roleCode" class="w-full border rounded px-3 py-2" placeholder="如 TAM">
+		</div>
+		<div class="mb-3">
+			<label class="block text-sm mb-1">角色名称</label>
+			<input id="roleName" class="w-full border rounded px-3 py-2" placeholder="如 技术域管理员">
+		</div>
+		<div class="mb-3">
+			<label class="block text-sm mb-1">描述</label>
+			<textarea id="roleDesc" class="w-full border rounded px-3 py-2" rows="2"></textarea>
+		</div>
+		<div class="mb-3">
+			<label class="block text-sm mb-1">权限点（JSON 数组）</label>
+			<textarea id="rolePerms" class="w-full border rounded px-3 py-2 font-mono text-sm" rows="3" placeholder='["sys:user:read","tam:org:manage"]'></textarea>
+		</div>
+		<div class="flex justify-end gap-2">
+			<button onclick="closeModal()" class="px-4 py-2 border rounded">取消</button>
+			<button onclick="saveRole()" class="px-4 py-2 bg-blue-600 text-white rounded">保存</button>
+		</div>
+	</div>
+</div>
+
+<script>
+const API='/api/v1';
+let roles=[];
+
+async function loadRoles(){
+	const r=await fetch(API+'/admin/roles');
+	const d=await r.json();
+	if(d.code!==200){alert(d.message||'load failed');return}
+	roles=d.data.items;
+	renderRoles(roles);
+}
+
+function renderRoles(items){
+	if(!items||items.length===0){
+		document.getElementById('roleTable').innerHTML='<tr><td colspan="5" class="text-center py-8 text-gray-400">暂无数据</td></tr>';
+		return;
+	}
+	let html='';
+	for(const role of items){
+		const perms=role.permissions?role.permissions.substring(0,50)+(role.permissions.length>50?'...':''):'-';
+		html+='<tr class="border-b hover:bg-gray-50">';
+		html+='<td class="px-4 py-3 font-mono text-sm">'+role.role_code+'</td>';
+		html+='<td class="px-4 py-3">'+role.name+'</td>';
+		html+='<td class="px-4 py-3 text-sm text-gray-600">'+(role.description||'-')+'</td>';
+		html+='<td class="px-4 py-3 text-xs font-mono">'+perms+'</td>';
+		html+='<td class="px-4 py-3">';
+		html+='<button onclick="editRole('+role.id+')" class="text-blue-600 hover:underline mr-2">编辑</button>';
+		html+='<button onclick="deleteRole('+role.id+',\''+role.role_code+'\')" class="text-red-600 hover:underline">删除</button>';
+		html+='</td>';
+		html+='</tr>';
+	}
+	document.getElementById('roleTable').innerHTML=html;
+}
+
+function showCreateModal(){
+	document.getElementById('modalTitle').textContent='新增角色';
+	document.getElementById('editId').value='';
+	document.getElementById('roleCode').value='';
+	document.getElementById('roleCode').disabled=false;
+	document.getElementById('roleName').value='';
+	document.getElementById('roleDesc').value='';
+	document.getElementById('rolePerms').value='';
+	document.getElementById('modal').classList.remove('hidden');
+}
+
+function editRole(id){
+	const role=roles.find(r=>r.id===id);
+	if(!role)return;
+	document.getElementById('modalTitle').textContent='编辑角色';
+	document.getElementById('editId').value=id;
+	document.getElementById('roleCode').value=role.role_code;
+	document.getElementById('roleCode').disabled=true;
+	document.getElementById('roleName').value=role.name;
+	document.getElementById('roleDesc').value=role.description||'';
+	document.getElementById('rolePerms').value=role.permissions||'';
+	document.getElementById('modal').classList.remove('hidden');
+}
+
+function closeModal(){
+	document.getElementById('modal').classList.add('hidden');
+}
+
+async function saveRole(){
+	const id=document.getElementById('editId').value;
+	const data={
+		name:document.getElementById('roleName').value,
+		description:document.getElementById('roleDesc').value,
+		permissions:document.getElementById('rolePerms').value
+	};
+	if(!id){
+		data.role_code=document.getElementById('roleCode').value;
+		if(!data.role_code){alert('请输入角色编码');return}
+		const r=await fetch(API+'/admin/roles',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});
+		const d=await r.json();
+		if(d.code!==201){alert(d.message||'create failed');return}
+	}else{
+		const r=await fetch(API+'/admin/roles/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});
+		const d=await r.json();
+		if(d.code!==200){alert(d.message||'update failed');return}
+	}
+	closeModal();
+	loadRoles();
+}
+
+async function deleteRole(id,code){
+	if(!confirm('确认删除角色 '+code+'？'))return;
+	const r=await fetch(API+'/admin/roles/'+id,{method:'DELETE'});
+	const d=await r.json();
+	if(d.code!==200){alert(d.message||'delete failed');return}
+	loadRoles();
+}
+
+loadRoles();
+</script>
+</body>
+</html>
