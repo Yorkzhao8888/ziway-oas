@@ -68,6 +68,9 @@ ziway-backend/
 - BOS（cmd/os）启动强校验安全三件套：`configs/public_key.pem` + `configs/rbac_model.conf` + `configs/rbac_policy.csv`，任一缺失 → fail-closed 拒绝启动
 - JWT 中间件 Redis 黑名单检查为可选（rdb=nil 时跳过），不影响 JWT 验签本身
 - `/health` 端点公开，`/api/v1/*` 全部需要 JWT + RBAC
+- OAuth 表名遵循 GORM 驼峰转下划线规则：`OAuthClient` → `o_auth_clients`，`OAuthAuthorizationCode` → `o_auth_authorization_codes`
+- JWT context 键为 `user_id`（非 `user_code`），提取时需类型断言：`userID, ok := userIDVal.(string)`
+- 开发环境启动需清除平台注入的 `ZIWAY_DATABASE_DRIVER` 和 `ZIWAY_DATABASE_DSN`，否则会使用 PostgreSQL 而非 SQLite
 
 ## OAS Console 治理平面功能
 
@@ -98,6 +101,17 @@ ziway-backend/
   - 信任级别：basic/standard/full 三档
   - 节点属性：NodeName/NodeID/TrustLevel/PublicKey/Endpoint/Capabilities
   - HTML 页面：/admin/federation-nodes
+
+### OAS-CONSOLE-06 OIDC/OAuth 统一登录入口（已完成）
+- **OIDC 发现文档**：GET /.well-known/openid-configuration
+- **JWKS 端点**：GET /oauth/jwks（RS256 公钥）
+- **授权端点**：GET /oauth/authorize（重定向到登录页，携带 OAuth 参数）
+- **授权码生成**：POST /api/v1/oauth/authorize-code（需 JWT 认证）
+- **Token 交换**：POST /oauth/token（授权码换 access_token/id_token/refresh_token）
+- **用户信息**：GET /oauth/userinfo（需 Bearer token，返回用户详情）
+- **登录页集成**：检测 OAuth 参数后自动跳转 client redirect_uri
+- **数据模型**：OAuthClient、OAuthAuthorizationCode（5 分钟过期，一次性使用）
+- **安全特性**：client_secret bcrypt 哈希、授权码一次性使用、token RS256 签名
 
 ### 权限模型
 - **白名单 A**：OU + AU（最高权限，可管理审批单）
