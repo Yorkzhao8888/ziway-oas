@@ -27,7 +27,6 @@ import (
 	"ziway/backend/pkg/response"
 
 	"github.com/gin-gonic/gin"
-	"golang.org/x/crypto/bcrypt"
 )
 
 // ========== OAS Models (Owner + Admin shared) ==========
@@ -323,93 +322,7 @@ func main() {
 		admin.DELETE("/oauth-clients/:id", handlers.H.DeleteOAuthClient)
 
 		// 审计日志路由组 — 白名单 A + XAM 角色放行，handler 内再做细粒度检查
-		adminAuditLogs := api.Group("/admin/audit-logs", func(c *gin.Context) {
-			// Try API Key first
-			var apiKeyStr string
-
-			// Check Authorization header (Bearer)
-			authHeader := c.GetHeader("Authorization")
-			if strings.HasPrefix(authHeader, "Bearer ") {
-				apiKeyStr = authHeader[7:]
-			}
-
-			// Check X-API-Key header
-			if apiKeyStr == "" {
-				apiKeyStr = c.GetHeader("X-API-Key")
-			}
-
-			// Check api_key query parameter
-			if apiKeyStr == "" {
-				apiKeyStr = c.Query("api_key")
-			}
-
-			if apiKeyStr != "" {
-				// Extract prefix (first part before _)
-				parts := strings.SplitN(apiKeyStr, "_", 3)
-				if len(parts) >= 2 {
-					prefix := parts[0] + "_" + parts[1]
-
-					// Look up API key by prefix
-					var key oasmodel.APIKey
-					if err := database.Where("key_prefix = ?", prefix).First(&key).Error; err == nil {
-						// Check status
-						if key.Status == "active" {
-							// Check expiry
-							if key.ExpiresAt == nil || !key.ExpiresAt.Before(time.Now()) {
-								// Verify key hash
-								if err := bcrypt.CompareHashAndPassword([]byte(key.KeyHash), []byte(apiKeyStr)); err == nil {
-									// API Key auth succeeded
-									c.Set("api_key_id", key.ID)
-									c.Set("api_key_name", key.KeyName)
-									c.Set("api_key_scopes", key.Scopes)
-									c.Set("auth_type", "api_key")
-									c.Set("username", "api-key:"+key.KeyName)
-									c.Next()
-									return
-								}
-							}
-						}
-					}
-				}
-			}
-
-			// Otherwise, try JWT
-			middleware.JWTAuth(jwtVerifier, nil, log)(c)
-		}, func(c *gin.Context) {
-			// Allow API keys
-			authType, _ := c.Get("auth_type")
-			if authType == "api_key" {
-				c.Next()
-				return
-			}
-
-			username, _ := c.Get("username")
-			rolesRaw, _ := c.Get("roles")
-			var roles []string
-			if rolesRaw != nil {
-				if rolesSlice, ok := rolesRaw.([]string); ok {
-					roles = rolesSlice
-				} else if rolesStr, ok := rolesRaw.(string); ok && rolesStr != "" {
-					roles = strings.Split(rolesStr, ",")
-				}
-			}
-
-			isWhitelistA := authz.IsInAdminWhitelistA(database, username.(string))
-			isXAM := false
-			for _, role := range roles {
-				if role == "TAM" || role == "HAM" || role == "YAM" || role == "VAM" {
-					isXAM = true
-					break
-				}
-			}
-
-			if !isWhitelistA && !isXAM {
-				response.Forbidden(c, "access denied")
-				c.Abort()
-				return
-			}
-			c.Next()
-		})
+		adminAuditLogs := api.Group("/admin/audit-logs", handlers.H.AuditLogsAuth(), handlers.H.AuditLogsGate())
 
 		// 审计日志 — 白名单 B (OU/AU) 全量，OAM 不可读
 		// OAS-CONSOLE-08: 移除 XAM 域过滤，仅白名单 B 可访问
