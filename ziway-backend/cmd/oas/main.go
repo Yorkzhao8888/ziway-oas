@@ -779,9 +779,9 @@ func main() {
 			}
 
 			// Get user from JWT
-			userCode, _ := c.Get("user_code")
+			userID, _ := c.Get("user_id")
 			var user OASUser
-			if err := database.Where("user_code = ?", userCode).First(&user).Error; err != nil {
+			if err := database.Where("user_code = ?", userID).First(&user).Error; err != nil {
 				response.InternalError(c, "user not found")
 				return
 			}
