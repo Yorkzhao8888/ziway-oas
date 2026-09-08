@@ -1,0 +1,15 @@
+# OAS-CONSOLE-09 A0 基线：authz 权限函数依赖来源确认（authz-deps.txt）
+# 结论：5 个权限函数中 4 个查库、1 个纯 map；A1 下沉 internal/oas/authz 时按注入原则处理
+
+| 函数 | 行号 | 依赖来源 | DB 依赖 | A1 处理 |
+|---|---|---|---|---|
+| isAdminAccount(username) | L4582 | adminUsernames 包级 map（静态表，main 启动时填充）| 无 | authz 包内读包级 map（map 为只读查找表，随 state 迁移或 authz 包内自带，回报时定）|
+| canOperateAdminAccount(db, username) | L4587 | 查 users 表 role_code IN (OU,AU,SU) | 是 | 已显式传参 db，保持签名 |
+| isInAdminWhitelistB(db, username) | L4595 | 转发 canOperateAdminAccount | 是（间接）| 已显式传参 db，保持签名 |
+| isInAdminWhitelistA(db, username) | L4603 | 查 users 表 role_code IN (SU,OU,AU,OAM) | 是 | 已显式传参 db，保持签名 |
+| canAccessOrgManagement(db, username, roles) | L4615 | 转发 isInAdminWhitelistA | 是（间接）| 已显式传参 db，保持签名 |
+
+## 补充
+- adminUsernames 填充：seedTestUsers 内（L4576 邻近 main 启动段，见 deps-inventory.txt）
+- adminUsernames 语义：SSO 特权用户名集合，isAdminAccount 判定 SSO admin
+- JWT claims 中 role 判断（c.Get("role")）在 handler/middleware 内联，不属于 authz 函数

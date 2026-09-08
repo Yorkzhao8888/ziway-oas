@@ -1,0 +1,10 @@
+{
+  "meta": {
+    "_snapshot": "federation-nodes",
+    "_url": "/api/v1/admin/federation-nodes",
+    "_http_status": "200",
+    "_captured": "2026-09-08",
+    "_anchor": "f7d48aff59"
+  },
+  "body": null
+}

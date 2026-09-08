@@ -1,0 +1,11 @@
+{
+  "meta": {
+    "_snapshot": "disabled-user-login",
+    "_url": "POST /api/v1/auth/login (username=disabled_user)",
+    "_http_status": "401",
+    "_captured": "2026-09-08",
+    "_anchor": "f7d48aff59",
+    "_note": "disabled_user (status=disabled) 登录被拒，禁用账号 401 用例"
+  },
+  "body": null
+}

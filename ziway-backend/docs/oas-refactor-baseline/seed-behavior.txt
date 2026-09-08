@@ -1,0 +1,16 @@
+# OAS-CONSOLE-09 A0 基线：seed 执行时机（seed-behavior.txt）
+# 结论：每次启动无条件执行（非表空才 seed），函数内部各自幂等（存在性检查）
+
+| 函数 | 调用位置(绝对行) | 时机 | 幂等机制 |
+|---|---|---|---|
+| seedRBACPolicies(database, log) | L3106（main 内联，handler 注册段前）| 每次启动无条件 | 内部 Count 检查 + FirstOrCreate 语义 |
+| seedTestUsers(database, log, edition) | L3112（紧随其后）| 每次启动无条件，参数 edition 传入 | 内部 Count>2 早退（admin 账号）+ 用户级存在性检查 |
+| regeneratePolicyCSV(database, log) | L4571（seedRBACPolicies 尾部）+ L3076/3089/3095/3100（RBAC 策略 CRUD handler 内按需触发）| 启动 + 策略变更时 | 文件重写 |
+| AutoMigrate | L272-277 | 每次启动无条件 | GORM 幂等 |
+
+## A1 拆分要求（验收 #7 对照）
+1. seedRBACPolicies/seedTestUsers 迁 internal/oas/seed.go（package oas）
+2. DB/Logger 依赖显式传参（现状已是 `seedRBACPolicies(database, log)` 签名，拆分保持）
+3. 调用时机不变：main() 中相同位置调用，顺序 seedRBACPolicies → seedTestUsers
+4. edition 参数继续由 config 传入
+5. regeneratePolicyCSV 保持双调用点（启动尾 + RBAC CRUD handler 内）

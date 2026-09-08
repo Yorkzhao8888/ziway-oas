@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>OU 治理看板 - OAS Console</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:#f3f4f6;color:#111827}
+.header{background:#fff;border-bottom:1px solid #e5e7eb;padding:16px 24px;display:flex;align-items:center;justify-content:space-between}
+.header h1{font-size:18px;font-weight:600}
+.user-info{font-size:13px;color:#6b7280}
+.container{max-width:1200px;margin:24px auto;padding:0 24px}
+.env-badge{display:inline-block;padding:4px 12px;border-radius:9999px;font-size:12px;font-weight:600;margin-left:12px}
+.env-DEV{background:#dbeafe;color:#1e40af}
+.env-BETA{background:#fef3c7;color:#92400e}
+.env-RC{background:#e0e7ff;color:#3730a3}
+.env-PROD{background:#fee2e2;color:#991b1b}
+.stats-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:16px;margin-bottom:32px}
+.stat-card{background:#fff;border-radius:12px;box-shadow:0 1px 3px rgba(0,0,0,.1);padding:20px}
+.stat-card h3{font-size:13px;color:#6b7280;font-weight:500;margin-bottom:8px}
+.stat-card .value{font-size:32px;font-weight:700;color:#111827}
+.stat-card .sub{font-size:12px;color:#9ca3af;margin-top:4px}
+.section{background:#fff;border-radius:12px;box-shadow:0 1px 3px rgba(0,0,0,.1);padding:24px;margin-bottom:24px}
+.section h2{font-size:16px;font-weight:600;margin-bottom:16px;display:flex;align-items:center;gap:8px}
+.domain-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:12px}
+.domain-item{background:#f9fafb;border-radius:8px;padding:12px;text-align:center}
+.domain-item .code{font-size:14px;font-weight:600;color:#374151}
+.domain-item .count{font-size:24px;font-weight:700;color:#2563eb;margin-top:4px}
+.audit-list{list-style:none}
+.audit-list li{padding:12px 0;border-bottom:1px solid #f3f4f6;font-size:13px}
+.audit-list li:last-child{border-bottom:none}
+.audit-list .time{color:#9ca3af;font-size:12px}
+.audit-list .action{font-weight:500;color:#374151}
+.audit-list .user{color:#6b7280}
+.breadcrumb{font-size:13px;color:#6b7280;margin-bottom:16px}
+.breadcrumb a{color:#2563eb;text-decoration:none}
+</style>
+</head>
+<body>
+<div class="header">
+	<h1>OU 治理看板 <span class="env-badge env-BETA">BETA</span></h1>
+	<div class="user-info">admin | <a href="/admin?token=eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.****.****" style="color:#2563eb;text-decoration:none">返回 Console</a></div>
+</div>
+<div class="container">
+	<div class="breadcrumb"><a href="/admin?token=eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.****.****">Console</a> / 治理看板</div>
+	
+	<div class="stats-grid" id="stats">
+		<div class="stat-card"><h3>加载中...</h3></div>
+	</div>
+	
+	<div class="section">
+		<h2>🌐 域分布</h2>
+		<div class="domain-grid" id="domains">
+			<div class="domain-item"><div class="code">加载中...</div></div>
+		</div>
+	</div>
+	
+	<div class="section" id="audit-section" style="display:none">
+		<h2>📋 近期审计（仅 2 admin 可见）</h2>
+		<ul class="audit-list" id="audits"></ul>
+	</div>
+</div>
+
+<script>
+var token = 'eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.****.****';
+var isOUAU = ('admin' === 'oas-ou-admin' || 'admin' === 'oas-au-admin');
+
+fetch('/api/v1/admin/dashboard/stats', {
+	headers: {'Authorization': 'Bearer ' + token}
+}).then(function(r){ return r.json(); }).then(function(data){
+	if(data.code !== 200){
+		document.getElementById('stats').innerHTML = '<div class="stat-card"><h3>加载失败</h3></div>';
+		return;
+	}
+	var d = data.data;
+	document.getElementById('stats').innerHTML = '<div class="stat-card"><h3>启用账号</h3><div class="value">'+d.users_total+'</div><div class="sub">active users</div></div><div class="stat-card"><h3>组织总数</h3><div class="value">'+d.orgs_total+'</div><div class="sub">organizations</div></div><div class="stat-card"><h3>角色总数</h3><div class="value">'+d.roles_total+'</div><div class="sub">roles</div></div>';
+	
+	if(d.domain_distribution && d.domain_distribution.length > 0){
+		document.getElementById('domains').innerHTML = d.domain_distribution.map(function(item){
+			return '<div class="domain-item"><div class="code">'+(item.domain || '(未分配)')+'</div><div class="count">'+item.count+'</div></div>';
+		}).join('');
+	}else{
+		document.getElementById('domains').innerHTML = '<div class="domain-item"><div class="code">暂无数据</div></div>';
+	}
+	
+	if(isOUAU && d.recent_audits && d.recent_audits.length > 0){
+		document.getElementById('audit-section').style.display = 'block';
+		document.getElementById('audits').innerHTML = d.recent_audits.map(function(a){
+			return '<li><span class="time">'+new Date(a.created_at).toLocaleString('zh-CN')+'</span> <span class="action">'+a.action+'</span> by <span class="user">'+(a.username || 'system')+'</span>'+(a.domain ? ' ['+a.domain+']' : '')+'</li>';
+		}).join('');
+	}
+}).catch(function(err){
+	document.getElementById('stats').innerHTML = '<div class="stat-card"><h3>加载失败: ' + err.message + '</h3></div>';
+});
+</script>
+</body>
+</html>

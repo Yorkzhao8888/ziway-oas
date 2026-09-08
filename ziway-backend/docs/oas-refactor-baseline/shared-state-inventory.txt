@@ -1,0 +1,35 @@
+# OAS-CONSOLE-09 A0 基线：package 级共享可变状态盘点（shared-state-inventory.txt）
+# 范围：main.go 顶层 var 声明（函数外），A1 迁入 internal/oas/state.go
+
+L4576: var adminUsernames = map[string]bool{
+
+L5138: const API='/api/v1';
+
+L5351: var token = '` + token + `';
+
+L5352: var isOUAU = ('` + username + `' === 'oas-ou-admin' || '` + username + `' === 'oas-au-admin');
+
+L5532: const TOKEN = '` + token + `';
+
+L5533: const CAN_WRITE = ` + canWrite + `;
+
+L5778: const token = new URLSearchParams(location.search).get('token') || '';
+
+L5779: const headers = token ? {'Authorization':'Bearer '+token} : {};
+
+L5911: const token = new URLSearchParams(window.location.search).get('token');
+
+L6054: const token = new URLSearchParams(window.location.search).get('token');
+
+L6146: const token = new URLSearchParams(window.location.search).get('token');
+
+L6328: const token = new URLSearchParams(window.location.search).get('token');
+
+L6558: const API = '';
+
+L6721: const API='/api/v1';
+
+L6851: const API='/api/v1';
+
+L7025: const API='/api/v1';
+

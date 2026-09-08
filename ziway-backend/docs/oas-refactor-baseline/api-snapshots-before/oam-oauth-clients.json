@@ -1,0 +1,10 @@
+{
+  "meta": {
+    "_snapshot": "oam-oauth-clients",
+    "_url": "/api/v1/admin/oauth-clients",
+    "_http_status": "403",
+    "_captured": "2026-09-08",
+    "_anchor": "f7d48aff59"
+  },
+  "body": null
+}

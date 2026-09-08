@@ -1,0 +1,67 @@
+# OAS-CONSOLE-09 A0 基线：编译与静态检查原始输出
+# 基线锚点: f7d48aff59 内容 (HEAD 9264052)
+# 时间: 2026-09-08
+
+## go build ./...
+```
+go: downloading github.com/segmentio/kafka-go v0.4.47
+go: downloading google.golang.org/grpc v1.65.0
+go: downloading github.com/klauspost/compress v1.17.2
+go: downloading github.com/pierrec/lz4/v4 v4.1.15
+go: downloading google.golang.org/genproto/googleapis/rpc v0.0.0-20240528184218-531527333157
+exit=0
+```
+
+## go vet ./...
+```
+exit=0
+```
+
+## go test ./...
+```
+?   	ziway/backend/cmd/ms	[no test files]
+?   	ziway/backend/cmd/oas	[no test files]
+?   	ziway/backend/cmd/os	[no test files]
+?   	ziway/backend/internal/bos	[no test files]
+?   	ziway/backend/internal/bos/aos	[no test files]
+?   	ziway/backend/internal/bos/cos	[no test files]
+?   	ziway/backend/internal/bos/dos	[no test files]
+?   	ziway/backend/internal/bos/eos	[no test files]
+?   	ziway/backend/internal/bos/fos	[no test files]
+?   	ziway/backend/internal/bos/gos	[no test files]
+?   	ziway/backend/internal/bos/hos	[no test files]
+?   	ziway/backend/internal/bos/ios	[no test files]
+?   	ziway/backend/internal/bos/oos	[no test files]
+?   	ziway/backend/internal/bos/sos	[no test files]
+?   	ziway/backend/internal/bos/tos	[no test files]
+?   	ziway/backend/internal/bos/vos	[no test files]
+?   	ziway/backend/internal/mbs	[no test files]
+?   	ziway/backend/internal/mbs/ams	[no test files]
+?   	ziway/backend/internal/mbs/cms	[no test files]
+?   	ziway/backend/internal/mbs/dms	[no test files]
+?   	ziway/backend/internal/mbs/ems	[no test files]
+?   	ziway/backend/internal/mbs/fms	[no test files]
+?   	ziway/backend/internal/mbs/gms	[no test files]
+?   	ziway/backend/internal/mbs/hms	[no test files]
+?   	ziway/backend/internal/mbs/ims	[no test files]
+?   	ziway/backend/internal/mbs/oms	[no test files]
+?   	ziway/backend/internal/mbs/sms	[no test files]
+?   	ziway/backend/internal/mbs/tms	[no test files]
+?   	ziway/backend/internal/mbs/vms	[no test files]
+?   	ziway/backend/pkg/cache	[no test files]
+?   	ziway/backend/pkg/config	[no test files]
+?   	ziway/backend/pkg/db	[no test files]
+?   	ziway/backend/pkg/envpolicy	[no test files]
+?   	ziway/backend/pkg/eventbus	[no test files]
+?   	ziway/backend/pkg/idgen	[no test files]
+?   	ziway/backend/pkg/jwt	[no test files]
+?   	ziway/backend/pkg/kafka	[no test files]
+?   	ziway/backend/pkg/logger	[no test files]
+?   	ziway/backend/pkg/middleware	[no test files]
+?   	ziway/backend/pkg/model	[no test files]
+?   	ziway/backend/pkg/password	[no test files]
+?   	ziway/backend/pkg/ratelimit	[no test files]
+?   	ziway/backend/pkg/response	[no test files]
+?   	ziway/backend/pkg/server	[no test files]
+exit=0
+```

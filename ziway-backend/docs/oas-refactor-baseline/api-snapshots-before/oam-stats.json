@@ -1,0 +1,10 @@
+{
+  "meta": {
+    "_snapshot": "oam-stats",
+    "_url": "/api/v1/admin/stats",
+    "_http_status": "404",
+    "_captured": "2026-09-08",
+    "_anchor": "f7d48aff59"
+  },
+  "body": null
+}

@@ -1,0 +1,61 @@
+# OAS-CONSOLE-09 A0 基线：页面注入变量盘点（精确版）
+# 判定：仅反引号模板段之间的 Go 表达式（+ var + / + expr +）算注入点
+# 反引号段内部的 + x + 属于页面 JS，不是 Go 注入
+# A2 抽离策略：Go 级注入替换为 __MARKER__ 显式标记（strings.Replace），页面 JS 原样保留
+
+### loginPageHTML
+- 签名: (redirect string, oasEnv envpolicy.Environment, devTokenEnabled bool, oauthClientID, oauthRedirectURI, oauthResponseType, oauthScope, oauthState string)
+- Go 级注入表达式: ['redirect', 'redirectAttr', 'oauthAttrs', 'quickLoginSection', 'devTokenSection']
+
+### userMgmtPageHTML
+- 签名: ()
+- Go 级注入表达式: (无 - 纯静态模板)
+
+### consoleHomePageHTML
+- 签名: (username, oasEnv, token string)
+- Go 级注入表达式: ['oasEnv', 'oasEnv', 'username', 'token', 'token', 'token', 'token', 'token', 'token', 'token', 'token', 'token', 'token']
+
+### overviewPageHTML
+- 签名: (username, oasEnv, token string)
+- Go 级注入表达式: ['oasEnv', 'oasEnv', 'username', 'token', 'token', 'token', 'username', 'username']
+
+### approvalsPageHTML
+- 签名: (username, oasEnv, token string)
+- Go 级注入表达式: ['oasEnv', 'token', 'token', 'token', 'token', 'token', 'token', 'func() string {\n\t\tif !isOUAU {\n\t\t\treturn', 'func() string {\n\t\tif isOUAU {\n\t\t\treturn', 'token', 'canWrite', '"', '"', '"', '"', "new Date(a.approved_at).toLocaleString('zh-CN')", "new Date(a.executed_at).toLocaleString('zh-CN')", 'a.notes', '"</div>" : \'\'}']
+
+### ownershipPageHTML
+- 签名: (username string)
+- Go 级注入表达式: ['username']
+
+### adminAccountsPageHTML
+- 签名: (username string)
+- Go 级注入表达式: (无 - 纯静态模板)
+
+### systemConfigPageHTML
+- 签名: (username string)
+- Go 级注入表达式: (无 - 纯静态模板)
+
+### apiKeysPageHTML
+- 签名: (username string)
+- Go 级注入表达式: (无 - 纯静态模板)
+
+### federationNodesPageHTML
+- 签名: (username string)
+- Go 级注入表达式: (无 - 纯静态模板)
+
+### oauthClientsPageHTML
+- 签名: (username string)
+- Go 级注入表达式: ['username']
+
+### auditLogsPageHTML
+- 签名: ()
+- Go 级注入表达式: (无 - 纯静态模板)
+
+### roleMgmtPageHTML
+- 签名: ()
+- Go 级注入表达式: (无 - 纯静态模板)
+
+### orgMgmtPageHTML
+- 签名: ()
+- Go 级注入表达式: (无 - 纯静态模板)
+

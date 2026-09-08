@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>OAS Audit Logs</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:#f3f4f6;color:#111827}
+.header{background:#fff;border-bottom:1px solid #e5e7eb;padding:16px 24px;display:flex;align-items:center;justify-content:space-between}
+.header h1{font-size:18px;font-weight:600}
+.container{max-width:1200px;margin:24px auto;padding:0 24px}
+.card{background:#fff;border-radius:10px;box-shadow:0 1px 2px rgba(0,0,0,.06);padding:24px;margin-bottom:20px}
+.card h2{font-size:16px;font-weight:600;margin-bottom:16px}
+.filters{display:flex;gap:12px;margin-bottom:16px;flex-wrap:wrap}
+.filters input,.filters select{padding:8px 12px;border:1px solid #d1d5db;border-radius:6px;font-size:13px}
+.filters button{padding:8px 16px;border:none;border-radius:6px;background:#2563eb;color:#fff;cursor:pointer;font-size:13px}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{text-align:left;padding:10px 12px;border-bottom:2px solid #e5e7eb;font-weight:600;color:#6b7280;font-size:12px;text-transform:uppercase}
+td{padding:10px 12px;border-bottom:1px solid #f3f4f6;vertical-align:top}
+.badge{display:inline-block;padding:2px 8px;border-radius:9999px;font-size:11px;font-weight:500}
+.badge-admin{background:#e0e7ff;color:#3730a3}
+.badge-owner{background:#fef3c7;color:#92400e}
+.pagination{display:flex;gap:8px;justify-content:center;margin-top:16px}
+.pagination button{padding:6px 12px;border:1px solid #d1d5db;border-radius:6px;background:#fff;cursor:pointer;font-size:12px}
+.pagination button:disabled{opacity:.5;cursor:not-allowed}
+.pagination button.active{background:#2563eb;color:#fff;border-color:#2563eb}
+.empty{text-align:center;padding:40px;color:#9ca3af;font-size:14px}
+.detail{font-size:12px;color:#6b7280;max-width:300px;word-break:break-all}
+</style>
+</head>
+<body>
+<div class="header">
+	<h1>📋 审计日志</h1>
+	<a href="/admin" style="font-size:13px;color:#6b7280;text-decoration:none">← 返回 Console</a>
+</div>
+<div class="container">
+	<div class="card">
+		<div class="filters">
+			<input type="text" id="filterUser" placeholder="用户 ID">
+			<select id="filterPlane">
+				<option value="">全部平面</option>
+				<option value="admin">Admin</option>
+				<option value="owner">Owner</option>
+			</select>
+			<select id="filterAction">
+				<option value="">全部操作</option>
+				<option value="auth.login">登录</option>
+				<option value="auth.quick-login">快速登录</option>
+				<option value="auth.dev-token">开发令牌</option>
+				<option value="user.create">创建用户</option>
+				<option value="user.update_roles">修改角色</option>
+				<option value="user.update_status">修改状态</option>
+			</select>
+			<button onclick="loadLogs()">筛选</button>
+		</div>
+		<table>
+			<thead>
+				<tr>
+					<th>时间</th>
+					<th>用户</th>
+					<th>平面</th>
+					<th>操作</th>
+					<th>资源</th>
+					<th>详情</th>
+					<th>环境</th>
+					<th>IP</th>
+				</tr>
+			</thead>
+			<tbody id="logTable">
+				<tr><td colspan="8" class="empty">加载中...</td></tr>
+			</tbody>
+		</table>
+		<div class="pagination" id="pagination"></div>
+	</div>
+</div>
+<script>
+const API='/api/v1';
+let currentPage=1;
+let pageSize=20;
+let totalLogs=0;
+
+async function loadLogs(){
+	const user=document.getElementById('filterUser').value;
+	const plane=document.getElementById('filterPlane').value;
+	const action=document.getElementById('filterAction').value;
+	let url=API+'/admin/audit-logs?page='+currentPage+'&size='+pageSize;
+	if(user)url+='&user_id='+encodeURIComponent(user);
+	if(plane)url+='&plane='+encodeURIComponent(plane);
+	if(action)url+='&action='+encodeURIComponent(action);
+	const r=await fetch(url);
+	const d=await r.json();
+	if(d.code!==200){alert(d.message||'load failed');return}
+	totalLogs=d.data.total;
+	renderLogs(d.data.items);
+	renderPagination();
+}
+
+function renderLogs(items){
+	if(!items||items.length===0){
+		document.getElementById('logTable').innerHTML='<tr><td colspan="8" class="empty">暂无数据</td></tr>';
+		return;
+	}
+	let html='';
+	for(const log of items){
+		const time=new Date(log.created_at).toLocaleString('zh-CN');
+		const planeBadge=log.plane==='admin'?'<span class="badge badge-admin">Admin</span>':'<span class="badge badge-owner">Owner</span>';
+		html+='<tr>';
+		html+='<td>'+time+'</td>';
+		html+='<td>'+log.user_name+'<br><small style="color:#9ca3af">'+log.user_id+'</small></td>';
+		html+='<td>'+planeBadge+'</td>';
+		html+='<td><code style="font-size:11px;background:#f3f4f6;padding:2px 6px;border-radius:4px">'+log.action+'</code></td>';
+		html+='<td>'+log.resource+'</td>';
+		html+='<td class="detail">'+log.detail+'</td>';
+		html+='<td><span class="badge" style="background:#dbeafe;color:#1e40af">'+(log.environment||'DEV')+'</span></td>';
+		html+='<td>'+log.ip+'</td>';
+		html+='</tr>';
+	}
+	document.getElementById('logTable').innerHTML=html;
+}
+
+function renderPagination(){
+	const totalPages=Math.ceil(totalLogs/pageSize);
+	if(totalPages<=1){document.getElementById('pagination').innerHTML='';return}
+	let html='<button onclick="changePage('+(currentPage-1)+')" '+(currentPage===1?'disabled':'')+'>上一页</button>';
+	for(let i=1;i<=totalPages&&i<=5;i++){
+		html+='<button onclick="changePage('+i+')" class="'+(i===currentPage?'active':'')+'">'+i+'</button>';
+	}
+	if(totalPages>5)html+='<span style="padding:6px">...</span>';
+	html+='<button onclick="changePage('+(currentPage+1)+')" '+(currentPage===totalPages?'disabled':'')+'>下一页</button>';
+	document.getElementById('pagination').innerHTML=html;
+}
+
+function changePage(page){
+	currentPage=page;
+	loadLogs();
+}
+
+loadLogs();
+</script>
+</body>
+</html>

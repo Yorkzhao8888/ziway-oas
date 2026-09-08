@@ -1,0 +1,30 @@
+# OAS-CONSOLE-09 A0 基线：Handlers 依赖盘点（deps-inventory.txt）
+# 来源：main.go main() L258-4446 初始化段 AST/grep 盘点，Handlers struct 字段以此为准
+# 闭包形态：全部 handler 为 main() 内联闭包，捕获以下局部变量
+
+## main() 局部依赖（A1 Handlers struct 字段依据）
+| 变量 | 类型 | 初始化位置(绝对行) | 说明 |
+|---|---|---|---|
+| v | *viper.Viper | L260 config.Load | 配置加载 |
+| env | string | L262 v.GetString("app.env") | 应用环境 |
+| log | *zap.Logger | L263 logger.New | 日志（供 middleware.Recover 与 handler 使用）|
+| oasEnv | envpolicy.Environment | L264 envpolicy.GetOASEnv | 环境档位（DEV/BETA/PROD），注入响应 Environment 字段 |
+| database | *gorm.DB | L271 db.InitDB(v, log) | 主 DB（SQLite dev/PG prod），15+ model AutoMigrate L272-277 |
+| loginLimiter | *ratelimit.LoginLimiter | L282 ratelimit.NewLoginLimiter(5, 15m) | 登录失败限流（仅 login handler 用）|
+| r | *gin.Engine | L284 gin.New() | 路由引擎 |
+| jwtIssuer | *jwt.Issuer | L291 条件: 配置 jwt.public_key_path 存在 | RS256 签发（oauth token/authorize-code 用）|
+| jwtVerifier | *jwt.Verifier | L292-297 条件同上 | JWT 验签（auth 中间件 + 页面路由）|
+| jwtPublicKey | *rsa.PublicKey | L296 条件同上 | JWKS 导出用 |
+
+## 中间件依赖（A1 迁 internal/oas/middleware.go）
+- middleware.CORS() / middleware.TraceID() / middleware.Recover(log) — 全局 r.Use L285
+- middleware.JWTAuth(jwtVerifier, nil, log) — /api/v1/admin、/api/v1/owner、页面路由（nil=无 Redis 黑名单）
+- middleware.GetFilterDomain(c) — 域隔离过滤（orgs/审计等 handler 内引用）
+
+## 包级状态（A1 迁 internal/oas/state.go）
+- adminUsernames map[string]bool — L4576（静态查找表，读写均在 seedTestUsers/authz；实际运行期只读）
+- 其余无包级可变状态（AST 扫描确认）
+
+## 外部包引用（pkg/model 已存在，main.go 内 14 struct 为本地下沉对象）
+- ziway/backend/pkg/model — Organization/UserOrganization 等 MBS 模型（不迁，保留引用）
+- main.go 本地 14 struct → A1 迁 internal/oas/model
