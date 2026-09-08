@@ -2475,7 +2475,7 @@ func main() {
 	r.GET("/login", func(c *gin.Context) {
 		redirect := c.Query("redirect")
 		c.Header("Content-Type", "text/html; charset=utf-8")
-		c.String(200, loginPageHTML(redirect, edition, devTokenEnabled))
+		c.String(200, loginPageHTML(redirect, oasEnv, devTokenEnabled))
 	})
 
 	// ===== GET /admin — OAS Console 管理控制台首页 =====
@@ -4142,9 +4142,9 @@ func seedTestUsers(database *gorm.DB, log *zap.Logger, edition string) {
 }
 
 // loginPageHTML returns the login page HTML.
-func loginPageHTML(redirect, edition string, devTokenEnabled bool) string {
+func loginPageHTML(redirect string, oasEnv envpolicy.Environment, devTokenEnabled bool) string {
 	quickLoginSection := ""
-	if edition == "beta" {
+	if envpolicy.IsQuickLoginEnabled(oasEnv) {
 		quickLoginSection = `
 		<div style="margin-top:24px;padding-top:20px;border-top:1px solid #e5e7eb">
 			<p style="font-size:13px;color:#6b7280;margin-bottom:12px">内测快捷登录</p>
