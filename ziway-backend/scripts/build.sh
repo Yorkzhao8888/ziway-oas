@@ -35,9 +35,7 @@ if command -v go &> /dev/null; then
     
     echo "Build complete: bin/oas bin/ms bin/os"
 else
-    echo "ERROR: No pre-compiled binaries in dist/ and Go not found"
-    echo "Please either:"
-    echo "  1. Commit pre-compiled binaries to dist/"
-    echo "  2. Install Go compiler"
+    echo "ERROR: Go not found, cannot compile from source"
+    echo "Please install Go compiler (golang >= 1.22)"
     exit 1
 fi
