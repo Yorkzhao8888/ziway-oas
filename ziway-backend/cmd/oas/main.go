@@ -326,105 +326,18 @@ func main() {
 
 		// 审计日志 — 白名单 B (OU/AU) 全量，OAM 不可读
 		// OAS-CONSOLE-08: 移除 XAM 域过滤，仅白名单 B 可访问
-		adminAuditLogs.GET("", func(c *gin.Context) {
-			username, _ := c.Get("username")
-			// OAS-CONSOLE-08: roles variable removed (no longer needed for XAM filtering)
-
-			// Check access: whitelist B (OU/AU) only
-			// OAS-CONSOLE-08: XAM roles no longer have access
-			isWhitelistB := authz.IsInAdminWhitelistB(database, username.(string))
-
-			if !isWhitelistB {
-				response.Forbidden(c, "audit logs restricted to OU/AU admin")
-				return
-			}
-
-			var items []oasmodel.AuditLog
-			page, _ := parseInt(c.DefaultQuery("page", "1"))
-			size, _ := parseInt(c.DefaultQuery("size", "20"))
-			q := database.Model(&oasmodel.AuditLog{})
-
-			// OAS-CONSOLE-08: XAM domain filtering removed
-			// if isXAM && !isWhitelistB {
-			// 	domain, _ := c.Get("domain")
-			// 	if domainStr, ok := domain.(string); ok && domainStr != "" {
-			// 		q = q.Where("domain = ?", domainStr)
-			// 	} else {
-			// 		response.OK(c, gin.H{"items": []oasmodel.AuditLog{}, "total": 0, "page": page, "size": size})
-			// 		return
-			// 	}
-			// }
-
-			if uid := c.Query("user_id"); uid != "" {
-				q = q.Where("user_id = ?", uid)
-			}
-			if plane := c.Query("plane"); plane != "" {
-				q = q.Where("plane = ?", plane)
-			}
-			var total int64
-			q.Count(&total)
-			q.Order("created_at DESC").Offset((page - 1) * size).Limit(size).Find(&items)
-			response.OK(c, gin.H{"items": items, "total": total, "page": page, "size": size})
-		})
+		adminAuditLogs.GET("", handlers.H.ListAuditLogs)
 
 		// ===== RBAC 策略管理 (/admin/rbac/*) — OAS 权威源 =====
-		admin.GET("/rbac/policies", func(c *gin.Context) {
-			var items []oasmodel.RBACPolicy
-			q := database.Model(&oasmodel.RBACPolicy{}).Where("policy_type = ?", "rbac")
-			if role := c.Query("role_type"); role != "" {
-				q = q.Where("role_type = ?", role)
-			}
-			if subject := c.Query("subject"); subject != "" {
-				q = q.Where("subject = ?", subject)
-			}
-			q.Order("subject, resource").Find(&items)
-			response.OK(c, gin.H{"items": items, "total": len(items)})
-		})
+		admin.GET("/rbac/policies", handlers.H.ListRBACPolicies)
 
-		admin.POST("/rbac/policies", func(c *gin.Context) {
-			var p oasmodel.RBACPolicy
-			if err := c.ShouldBindJSON(&p); err != nil {
-				response.BadRequest(c, "invalid request")
-				return
-			}
-			p.PolicyType = "rbac"
-			if p.Effect == "" {
-				p.Effect = "allow"
-			}
-			if p.Status == "" {
-				p.Status = "active"
-			}
-			if err := database.Create(&p).Error; err != nil {
-				response.BadRequest(c, "create policy failed: "+err.Error())
-				return
-			}
-			oas.RegeneratePolicyCSV(database, log)
-			response.Created(c, p)
-		})
+		admin.POST("/rbac/policies", handlers.H.CreateRBACPolicy)
 
-		admin.PUT("/rbac/policies/:id", func(c *gin.Context) {
-			var p oasmodel.RBACPolicy
-			if err := database.First(&p, c.Param("id")).Error; err != nil {
-				response.NotFound(c, "policy not found")
-				return
-			}
-			c.ShouldBindJSON(&p)
-			p.ID, _ = parseUint(c.Param("id"))
-			database.Save(&p)
-			oas.RegeneratePolicyCSV(database, log)
-			response.OK(c, p)
-		})
+		admin.PUT("/rbac/policies/:id", handlers.H.UpdateRBACPolicy)
 
-		admin.DELETE("/rbac/policies/:id", func(c *gin.Context) {
-			database.Delete(&oasmodel.RBACPolicy{}, c.Param("id"))
-			oas.RegeneratePolicyCSV(database, log)
-			response.OK(c, nil)
-		})
+		admin.DELETE("/rbac/policies/:id", handlers.H.DeleteRBACPolicy)
 
-		admin.POST("/rbac/sync", func(c *gin.Context) {
-			oas.RegeneratePolicyCSV(database, log)
-			response.OK(c, gin.H{"message": "policy CSV regenerated"})
-		})
+		admin.POST("/rbac/sync", handlers.H.SyncRBAC)
 	}
 
 	// Seed default RBAC policies if empty
@@ -437,35 +350,7 @@ func main() {
 	oas.SeedTestUsers(database, log, edition)
 
 	// ===== Root Path (GET /) — Redirect to login or admin overview =====
-	r.GET("/", func(c *gin.Context) {
-		if jwtVerifier == nil {
-			// No JWT verifier, redirect to login
-			c.Redirect(302, "/login?redirect=/")
-			return
-		}
-		// Try to get JWT from query param or Authorization header
-		tokenStr := c.Query("token")
-		if tokenStr == "" {
-			auth := c.GetHeader("Authorization")
-			if len(auth) > 7 && auth[:7] == "Bearer " {
-				tokenStr = auth[7:]
-			}
-		}
-		if tokenStr == "" {
-			// No JWT, redirect to login
-			c.Redirect(302, "/login?redirect=/")
-			return
-		}
-		// Verify JWT
-		_, err := jwtVerifier.Verify(tokenStr)
-		if err != nil {
-			// Invalid JWT, redirect to login
-			c.Redirect(302, "/login?redirect=/")
-			return
-		}
-		// Valid JWT, redirect to admin overview
-		c.Redirect(302, "/admin/overview?token="+tokenStr)
-	})
+	r.GET("/", handlers.H.ConsoleHome)
 
 	// ===== Login Page (GET /login) =====
 	r.GET("/login", func(c *gin.Context) {
