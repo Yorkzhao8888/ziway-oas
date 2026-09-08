@@ -1137,9 +1137,18 @@ func main() {
 
 	// GET /oauth/userinfo — Userinfo endpoint
 	r.GET("/oauth/userinfo", middleware.JWTAuth(jwtVerifier, nil, log), func(c *gin.Context) {
-		userCode, _ := c.Get("user_code")
+		userIDVal, exists := c.Get("user_id")
+		if !exists {
+			response.InternalError(c, "user_id not found in context")
+			return
+		}
+		userID, ok := userIDVal.(string)
+		if !ok || userID == "" {
+			response.InternalError(c, "invalid user_id in context")
+			return
+		}
 		var user OASUser
-		if err := database.Where("user_code = ?", userCode).First(&user).Error; err != nil {
+		if err := database.Where("user_code = ?", userID).First(&user).Error; err != nil {
 			response.NotFound(c, "user not found")
 			return
 		}
