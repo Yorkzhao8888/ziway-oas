@@ -2440,6 +2440,37 @@ func main() {
 	}
 	seedTestUsers(database, log, edition)
 
+	// ===== Root Path (GET /) — Redirect to login or admin overview =====
+	r.GET("/", func(c *gin.Context) {
+		if jwtVerifier == nil {
+			// No JWT verifier, redirect to login
+			c.Redirect(302, "/login?redirect=/")
+			return
+		}
+		// Try to get JWT from query param or Authorization header
+		tokenStr := c.Query("token")
+		if tokenStr == "" {
+			auth := c.GetHeader("Authorization")
+			if len(auth) > 7 && auth[:7] == "Bearer " {
+				tokenStr = auth[7:]
+			}
+		}
+		if tokenStr == "" {
+			// No JWT, redirect to login
+			c.Redirect(302, "/login?redirect=/")
+			return
+		}
+		// Verify JWT
+		_, err := jwtVerifier.Verify(tokenStr)
+		if err != nil {
+			// Invalid JWT, redirect to login
+			c.Redirect(302, "/login?redirect=/")
+			return
+		}
+		// Valid JWT, redirect to admin overview
+		c.Redirect(302, "/admin/overview?token="+tokenStr)
+	})
+
 	// ===== Login Page (GET /login) =====
 	r.GET("/login", func(c *gin.Context) {
 		redirect := c.Query("redirect")
