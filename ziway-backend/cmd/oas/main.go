@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"math/big"
 	"os"
-	"runtime"
 	"strings"
 	"time"
 
@@ -263,83 +262,16 @@ func main() {
 		admin.PUT("/admin-accounts/:id/reset-password", handlers.H.ResetAdminPassword)
 
 		// 系统配置只读面板（白名单 B: SU/OU/AU）
-		admin.GET("/system-config", func(c *gin.Context) {
-			username, _ := c.Get("username")
-			usernameStr, _ := username.(string)
-
-			// 白名单 B: SU/OU/AU
-			if !authz.IsInAdminWhitelistB(database, usernameStr) {
-				response.Forbidden(c, "only SU/OU/AU admin can view system config")
-				return
-			}
-
-			// 读取环境变量（非敏感项）
-			appEnv := os.Getenv("APP_ENV")
-			if appEnv == "" {
-				appEnv = "dev"
-			}
-			oasEnv := os.Getenv("OAS_ENV")
-			if oasEnv == "" {
-				oasEnv = "DEV"
-			}
-			dbDriver := os.Getenv("ZIWAY_DATABASE_DRIVER")
-			if dbDriver == "" {
-				dbDriver = "sqlite"
-			}
-
-			// 构建配置信息（不暴露敏感项）
-			config := gin.H{
-				"app_env":    appEnv,
-				"oas_env":    oasEnv,
-				"db_driver":  dbDriver,
-				"go_version": runtime.Version(),
-				"build_time": "2026-09-08", // 可改为实际构建时间
-				"git_commit": "fa6cb5d",    // 可改为实际 commit
-			}
-
-			response.OK(c, config)
-		})
+		admin.GET("/system-config", handlers.H.GetSystemConfig)
 
 		// 系统配置
-		admin.GET("/configs", func(c *gin.Context) {
-			var items []oasmodel.SystemConfig
-			database.Order("category, key").Find(&items)
-			response.OK(c, items)
-		})
-		admin.PUT("/configs/:key", func(c *gin.Context) {
-			var cfg oasmodel.SystemConfig
-			if err := database.Where("key = ?", c.Param("key")).First(&cfg).Error; err != nil {
-				cfg.Key = c.Param("key")
-			}
-			c.ShouldBindJSON(&cfg)
-			database.Save(&cfg)
-			response.OK(c, cfg)
-		})
+		admin.GET("/configs", handlers.H.GetConfigs)
+		admin.PUT("/configs/:key", handlers.H.UpdateConfig)
 
 		// 服务注册
-		admin.GET("/services", func(c *gin.Context) {
-			var items []oasmodel.ServiceRegistry
-			database.Order("service_name").Find(&items)
-			response.OK(c, items)
-		})
-		admin.POST("/services", func(c *gin.Context) {
-			var s oasmodel.ServiceRegistry
-			if err := c.ShouldBindJSON(&s); err != nil {
-				response.BadRequest(c, "invalid request")
-				return
-			}
-			s.RegisteredAt = time.Now()
-			database.Create(&s)
-			response.Created(c, s)
-		})
-		admin.PUT("/services/:id/heartbeat", func(c *gin.Context) {
-			now := time.Now()
-			database.Model(&oasmodel.ServiceRegistry{}).Where("id = ?", c.Param("id")).Updates(map[string]interface{}{
-				"status":       "healthy",
-				"last_seen_at": &now,
-			})
-			response.OK(c, nil)
-		})
+		admin.GET("/services", handlers.H.ListServices)
+		admin.POST("/services", handlers.H.CreateService)
+		admin.PUT("/services/:id/heartbeat", handlers.H.ServiceHeartbeat)
 
 		// API密钥
 		// API Key 全生命周期管理 — 白名单 B (OU/AU)
