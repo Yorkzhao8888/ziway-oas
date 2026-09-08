@@ -117,17 +117,17 @@ type ServiceRegistry struct {
 
 // APIKey 密钥管理（Admin Plane）
 type APIKey struct {
-	ID         uint64         `gorm:"primarykey" json:"id"`
-	KeyName    string         `gorm:"size:64" json:"key_name"`
-	KeyPrefix  string         `gorm:"uniqueIndex;size:16" json:"key_prefix"`
-	KeyHash    string         `gorm:"size:128" json:"-"`
-	Scopes     string         `gorm:"type:text" json:"scopes"`
-	ExpiresAt  *time.Time     `json:"expires_at,omitempty"`
-	Status     string         `gorm:"size:16;default:active" json:"status"`
-	CreatedBy  string         `gorm:"size:32" json:"created_by"`
-	CreatedAt  time.Time      `json:"created_at"`
-	UpdatedAt  time.Time      `json:"updated_at"`
-	DeletedAt  gorm.DeletedAt `gorm:"index" json:"-"`
+	ID        uint64         `gorm:"primarykey" json:"id"`
+	KeyName   string         `gorm:"size:64" json:"key_name"`
+	KeyPrefix string         `gorm:"uniqueIndex;size:16" json:"key_prefix"`
+	KeyHash   string         `gorm:"size:128" json:"-"`
+	Scopes    string         `gorm:"type:text" json:"scopes"`
+	ExpiresAt *time.Time     `json:"expires_at,omitempty"`
+	Status    string         `gorm:"size:16;default:active" json:"status"`
+	CreatedBy string         `gorm:"size:32" json:"created_by"`
+	CreatedAt time.Time      `json:"created_at"`
+	UpdatedAt time.Time      `json:"updated_at"`
+	DeletedAt gorm.DeletedAt `gorm:"index" json:"-"`
 }
 
 // FederationNode 联邦节点管理（2b-3）
@@ -148,17 +148,17 @@ type FederationNode struct {
 
 // OAuthClient OAuth 客户端注册（OAS-CONSOLE-06）
 type OAuthClient struct {
-	ID          uint64         `gorm:"primarykey" json:"id"`
-	ClientID    string         `gorm:"uniqueIndex;size:64" json:"client_id"`
-	ClientName  string         `gorm:"size:128" json:"client_name"`
-	ClientSecret string        `gorm:"size:128" json:"-"` // bcrypt hashed
-	RedirectURI string         `gorm:"type:text" json:"redirect_uri"` // comma-separated
-	Scopes      string         `gorm:"type:text" json:"scopes"`       // comma-separated
-	Status      string         `gorm:"size:16;default:active" json:"status"` // active/inactive
-	CreatedBy   string         `gorm:"size:32" json:"created_by"`
-	CreatedAt   time.Time      `json:"created_at"`
-	UpdatedAt   time.Time      `json:"updated_at"`
-	DeletedAt   gorm.DeletedAt `gorm:"index" json:"-"`
+	ID           uint64         `gorm:"primarykey" json:"id"`
+	ClientID     string         `gorm:"uniqueIndex;size:64" json:"client_id"`
+	ClientName   string         `gorm:"size:128" json:"client_name"`
+	ClientSecret string         `gorm:"size:128" json:"-"`                    // bcrypt hashed
+	RedirectURI  string         `gorm:"type:text" json:"redirect_uri"`        // comma-separated
+	Scopes       string         `gorm:"type:text" json:"scopes"`              // comma-separated
+	Status       string         `gorm:"size:16;default:active" json:"status"` // active/inactive
+	CreatedBy    string         `gorm:"size:32" json:"created_by"`
+	CreatedAt    time.Time      `json:"created_at"`
+	UpdatedAt    time.Time      `json:"updated_at"`
+	DeletedAt    gorm.DeletedAt `gorm:"index" json:"-"`
 }
 
 // OAuthAuthorizationCode 授权码（OAS-CONSOLE-06）
@@ -213,44 +213,46 @@ type OASUser struct {
 
 // ApprovalRequest 战略审批单（L0 治理层）
 type ApprovalRequest struct {
-	ID          uint64      `gorm:"primarykey" json:"id"`
-	Title       string      `gorm:"size:200;not null" json:"title"`
-	Description string      `gorm:"type:text" json:"description"`
-	Type        string      `gorm:"size:50;not null;index" json:"type"` // high_privilege/org_delete/key_operation/federation
-	Status      string      `gorm:"size:20;not null;default:pending;index" json:"status"` // pending/approved/rejected/executed
-	RequesterID string      `gorm:"size:64;not null;index" json:"requester_id"` // 业务编码（如 XHPZ#OU-ADMIN）
-	ApproverID  *string     `gorm:"size:64" json:"approver_id"` // 业务编码
-	CreatedAt   time.Time   `json:"created_at"`
-	UpdatedAt   time.Time   `json:"updated_at"`
-	ApprovedAt  *time.Time  `json:"approved_at"`
-	ExecutedAt  *time.Time  `json:"executed_at"`
-	Notes       string      `gorm:"type:text" json:"notes"`
-	Domain      string      `gorm:"size:8;index" json:"domain"`
-	Environment string      `gorm:"size:20" json:"environment"`
+	ID          uint64     `gorm:"primarykey" json:"id"`
+	Title       string     `gorm:"size:200;not null" json:"title"`
+	Description string     `gorm:"type:text" json:"description"`
+	Type        string     `gorm:"size:50;not null;index" json:"type"`                   // high_privilege/org_delete/key_operation/federation
+	Status      string     `gorm:"size:20;not null;default:pending;index" json:"status"` // pending/approved/rejected/executed
+	RequesterID string     `gorm:"size:64;not null;index" json:"requester_id"`           // 业务编码（如 XHPZ#OU-ADMIN）
+	ApproverID  *string    `gorm:"size:64" json:"approver_id"`                           // 业务编码
+	CreatedAt   time.Time  `json:"created_at"`
+	UpdatedAt   time.Time  `json:"updated_at"`
+	ApprovedAt  *time.Time `json:"approved_at"`
+	ExecutedAt  *time.Time `json:"executed_at"`
+	Notes       string     `gorm:"type:text" json:"notes"`
+	Domain      string     `gorm:"size:8;index" json:"domain"`
+	Environment string     `gorm:"size:20" json:"environment"`
 }
 
 func (OASUser) TableName() string { return "users" }
 
 // OASRole / OASUserRole — 与 AMS 共享同一 DB 表。
 type OASRole struct {
-	ID          uint64         `gorm:"primarykey"`
-	RoleCode    string         `gorm:"uniqueIndex;size:32"`
-	Name        string         `gorm:"size:64"`
-	Description string         `gorm:"size:256"`
-	Permissions string         `gorm:"type:text"`
+	ID          uint64 `gorm:"primarykey"`
+	RoleCode    string `gorm:"uniqueIndex;size:32"`
+	Name        string `gorm:"size:64"`
+	Description string `gorm:"size:256"`
+	Permissions string `gorm:"type:text"`
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
 	DeletedAt   gorm.DeletedAt `gorm:"index"`
 }
+
 func (OASRole) TableName() string { return "roles" }
 
 type OASUserRole struct {
-	ID        uint64    `gorm:"primarykey"`
-	UserID    uint64    `gorm:"index:idx_user_role,unique"`
-	RoleID    uint64    `gorm:"index:idx_user_role,unique"`
-	GrantedBy string    `gorm:"size:32"`
+	ID        uint64 `gorm:"primarykey"`
+	UserID    uint64 `gorm:"index:idx_user_role,unique"`
+	RoleID    uint64 `gorm:"index:idx_user_role,unique"`
+	GrantedBy string `gorm:"size:32"`
 	GrantedAt time.Time
 }
+
 func (OASUserRole) TableName() string { return "user_roles" }
 
 func main() {
@@ -362,11 +364,11 @@ func main() {
 			return
 		}
 		response.OK(c, gin.H{
-			"algorithm": "RS256",
-			"key_type":  "RSA",
-			"format":    "PEM",
+			"algorithm":  "RS256",
+			"key_type":   "RSA",
+			"format":     "PEM",
 			"public_key": string(pubData),
-			"issuer":    v.GetString("jwt.issuer"),
+			"issuer":     v.GetString("jwt.issuer"),
 		})
 	})
 
@@ -934,18 +936,18 @@ func main() {
 			baseURL = scheme + "://" + baseURL
 		}
 		response.OK(c, gin.H{
-			"issuer":                 issuer,
-			"authorization_endpoint": baseURL + "/oauth/authorize",
-			"token_endpoint":         baseURL + "/oauth/token",
-			"userinfo_endpoint":      baseURL + "/oauth/userinfo",
-			"jwks_uri":               baseURL + "/oauth/jwks",
-			"scopes_supported":       []string{"openid", "profile", "email"},
-			"response_types_supported": []string{"code"},
-			"grant_types_supported":    []string{"authorization_code"},
-			"subject_types_supported":  []string{"public"},
+			"issuer":                                issuer,
+			"authorization_endpoint":                baseURL + "/oauth/authorize",
+			"token_endpoint":                        baseURL + "/oauth/token",
+			"userinfo_endpoint":                     baseURL + "/oauth/userinfo",
+			"jwks_uri":                              baseURL + "/oauth/jwks",
+			"scopes_supported":                      []string{"openid", "profile", "email"},
+			"response_types_supported":              []string{"code"},
+			"grant_types_supported":                 []string{"authorization_code"},
+			"subject_types_supported":               []string{"public"},
 			"id_token_signing_alg_values_supported": []string{"RS256"},
-			"token_endpoint_auth_methods_supported":  []string{"client_secret_post", "client_secret_basic"},
-			"claims_supported": []string{"sub", "iss", "aud", "exp", "iat", "name", "email", "role"},
+			"token_endpoint_auth_methods_supported": []string{"client_secret_post", "client_secret_basic"},
+			"claims_supported":                      []string{"sub", "iss", "aud", "exp", "iat", "name", "email", "role"},
 		})
 	})
 
@@ -1172,29 +1174,29 @@ func main() {
 	admin.Use(func(c *gin.Context) {
 		// Try API Key first
 		var apiKeyStr string
-		
+
 		// Check Authorization header (Bearer)
 		authHeader := c.GetHeader("Authorization")
 		if strings.HasPrefix(authHeader, "Bearer ") {
 			apiKeyStr = authHeader[7:]
 		}
-		
+
 		// Check X-API-Key header
 		if apiKeyStr == "" {
 			apiKeyStr = c.GetHeader("X-API-Key")
 		}
-		
+
 		// Check api_key query parameter
 		if apiKeyStr == "" {
 			apiKeyStr = c.Query("api_key")
 		}
-		
+
 		if apiKeyStr != "" {
 			// Extract prefix (first part before _)
 			parts := strings.SplitN(apiKeyStr, "_", 3)
 			if len(parts) >= 2 {
 				prefix := parts[0] + "_" + parts[1]
-				
+
 				// Look up API key by prefix
 				var key APIKey
 				if err := database.Where("key_prefix = ?", prefix).First(&key).Error; err == nil {
@@ -1218,7 +1220,7 @@ func main() {
 				}
 			}
 		}
-		
+
 		// Otherwise, try JWT
 		middleware.JWTAuth(jwtVerifier, nil, log)(c)
 	})
@@ -1229,45 +1231,45 @@ func main() {
 			c.Next()
 			return
 		}
-		
+
 		// Check if user has admin role (SU/OU/AU)
 		username, _ := c.Get("username")
 		if username == nil {
 			response.Unauthorized(c, "unauthorized")
 			return
 		}
-		
+
 		var user OASUser
 		if err := database.Where("username = ?", username).First(&user).Error; err != nil {
 			response.Unauthorized(c, "user not found")
 			return
 		}
-		
+
 		// Check if user has admin role (whitelist A: SU/OU/AU/OAM)
 		if user.RoleCode != "SU" && user.RoleCode != "OU" && user.RoleCode != "AU" && user.RoleCode != "OAM" {
 			response.Forbidden(c, "access denied: admin role required")
 			return
 		}
-		
+
 		c.Next()
 	})
 	{
 		// ===== 治理看板 (/admin/dashboard/*) =====
 		admin.GET("/dashboard/stats", func(c *gin.Context) {
 			username, _ := c.Get("username")
-			
+
 			// 用户统计（仅 active）
 			var usersTotal int64
 			database.Model(&OASUser{}).Where("status = ?", "active").Count(&usersTotal)
-			
+
 			// 组织统计
 			var orgsTotal int64
 			database.Model(&model.Organization{}).Count(&orgsTotal)
-			
+
 			// 角色统计
 			var rolesTotal int64
 			database.Model(&OASRole{}).Count(&rolesTotal)
-			
+
 			// 域分布（基于 organizations）
 			type DomainCount struct {
 				Domain string `json:"domain"`
@@ -1299,22 +1301,22 @@ func main() {
 					}
 				}
 			}
-			
+
 			// 审计摘要（仅 2admin 可见明细，OAM 只返回统计）
 			isOUAU := username == "oas-ou-admin" || username == "oas-au-admin"
-			
+
 			result := gin.H{
 				"users_total":         usersTotal,
 				"orgs_total":          orgsTotal,
 				"roles_total":         rolesTotal,
 				"domain_distribution": domainDistribution,
 			}
-			
+
 			if isOUAU {
 				// 2admin 可见审计明细
 				var recentAudits []AuditLog
 				database.Order("created_at DESC").Limit(10).Find(&recentAudits)
-				
+
 				type ActionCount struct {
 					Action string `json:"action"`
 					Count  int64  `json:"count"`
@@ -1324,11 +1326,11 @@ func main() {
 					Select("action, COUNT(*) as count").
 					Group("action").
 					Scan(&auditSummary)
-				
+
 				result["recent_audits"] = recentAudits
 				result["audit_summary"] = auditSummary
 			}
-			
+
 			response.OK(c, result)
 		})
 
@@ -1336,13 +1338,13 @@ func main() {
 		admin.GET("/approvals", func(c *gin.Context) {
 			username, _ := c.Get("username")
 			usernameStr, _ := username.(string)
-			
+
 			// 白名单 B: SU/OU/AU
 			if !isInAdminWhitelistB(database, usernameStr) {
 				response.Forbidden(c, "only SU/OU/AU admin can view approvals")
 				return
 			}
-			
+
 			var approvals []ApprovalRequest
 			database.Order("created_at DESC").Find(&approvals)
 			response.OK(c, approvals)
@@ -1353,19 +1355,19 @@ func main() {
 			userID, _ := c.Get("user_id")
 			domain, _ := c.Get("domain")
 			oasEnv, _ := c.Get("oas_env")
-			
+
 			// 类型断言
 			usernameStr, _ := username.(string)
 			userIDStr, _ := userID.(string)
 			domainStr, _ := domain.(string)
 			oasEnvStr, _ := oasEnv.(string)
-			
+
 			// 白名单 B: SU/OU/AU
 			if !isInAdminWhitelistB(database, usernameStr) {
 				response.Forbidden(c, "only SU/OU/AU admin can create approvals")
 				return
 			}
-			
+
 			var req struct {
 				Title       string `json:"title" binding:"required"`
 				Description string `json:"description"`
@@ -1375,7 +1377,7 @@ func main() {
 				response.BadRequest(c, err.Error())
 				return
 			}
-			
+
 			// 验证类型
 			validTypes := map[string]bool{
 				"high_privilege": true,
@@ -1387,7 +1389,7 @@ func main() {
 				response.BadRequest(c, "invalid approval type")
 				return
 			}
-			
+
 			approval := ApprovalRequest{
 				Title:       req.Title,
 				Description: req.Description,
@@ -1397,12 +1399,12 @@ func main() {
 				Domain:      domainStr,
 				Environment: oasEnvStr,
 			}
-			
+
 			if err := database.Create(&approval).Error; err != nil {
 				response.InternalError(c, "create approval failed: "+err.Error())
 				return
 			}
-			
+
 			// 审计日志
 			database.Create(&AuditLog{
 				UserID:      usernameStr,
@@ -1417,7 +1419,7 @@ func main() {
 				Environment: oasEnvStr,
 				Domain:      domainStr,
 			})
-			
+
 			response.Created(c, approval)
 		})
 
@@ -1426,41 +1428,41 @@ func main() {
 			userID, _ := c.Get("user_id")
 			domain, _ := c.Get("domain")
 			oasEnv, _ := c.Get("oas_env")
-			
+
 			// 类型断言
 			usernameStr, _ := username.(string)
 			userIDStr, _ := userID.(string)
 			domainStr, _ := domain.(string)
 			oasEnvStr, _ := oasEnv.(string)
-			
+
 			// 白名单 B: SU/OU/AU
 			if !isInAdminWhitelistB(database, usernameStr) {
 				response.Forbidden(c, "only SU/OU/AU admin can approve")
 				return
 			}
-			
+
 			id, _ := parseUint(c.Param("id"))
 			var approval ApprovalRequest
 			if err := database.First(&approval, id).Error; err != nil {
 				response.NotFound(c, "approval not found")
 				return
 			}
-			
+
 			if approval.Status != "pending" {
 				response.BadRequest(c, "approval is not pending")
 				return
 			}
-			
+
 			now := time.Now()
 			approval.Status = "approved"
 			approval.ApproverID = ptrString(userIDStr)
 			approval.ApprovedAt = &now
-			
+
 			if err := database.Save(&approval).Error; err != nil {
 				response.InternalError(c, "approve failed: "+err.Error())
 				return
 			}
-			
+
 			// 审计日志
 			database.Create(&AuditLog{
 				UserID:      usernameStr,
@@ -1475,7 +1477,7 @@ func main() {
 				Environment: oasEnvStr,
 				Domain:      domainStr,
 			})
-			
+
 			response.OK(c, approval)
 		})
 
@@ -1484,45 +1486,45 @@ func main() {
 			userID, _ := c.Get("user_id")
 			domain, _ := c.Get("domain")
 			oasEnv, _ := c.Get("oas_env")
-			
+
 			// 类型断言
 			usernameStr, _ := username.(string)
 			userIDStr, _ := userID.(string)
 			domainStr, _ := domain.(string)
 			oasEnvStr, _ := oasEnv.(string)
-			
+
 			// 仅 OU/AU 可拒绝
 			if usernameStr != "oas-ou-admin" && usernameStr != "oas-au-admin" {
 				response.Forbidden(c, "only OU/AU admin can reject")
 				return
 			}
-			
+
 			id, _ := parseUint(c.Param("id"))
 			var approval ApprovalRequest
 			if err := database.First(&approval, id).Error; err != nil {
 				response.NotFound(c, "approval not found")
 				return
 			}
-			
+
 			if approval.Status != "pending" {
 				response.BadRequest(c, "approval is not pending")
 				return
 			}
-			
+
 			var req struct {
 				Notes string `json:"notes"`
 			}
 			c.ShouldBindJSON(&req)
-			
+
 			approval.Status = "rejected"
 			approval.ApproverID = ptrString(userIDStr)
 			approval.Notes = req.Notes
-			
+
 			if err := database.Save(&approval).Error; err != nil {
 				response.InternalError(c, "reject failed: "+err.Error())
 				return
 			}
-			
+
 			// 审计日志
 			database.Create(&AuditLog{
 				UserID:      usernameStr,
@@ -1537,7 +1539,7 @@ func main() {
 				Environment: oasEnvStr,
 				Domain:      domainStr,
 			})
-			
+
 			response.OK(c, approval)
 		})
 
@@ -1545,39 +1547,39 @@ func main() {
 			username, _ := c.Get("username")
 			domain, _ := c.Get("domain")
 			oasEnv, _ := c.Get("oas_env")
-			
+
 			// 类型断言
 			usernameStr, _ := username.(string)
 			domainStr, _ := domain.(string)
 			oasEnvStr, _ := oasEnv.(string)
-			
+
 			// 仅 OU/AU 可标记执行
 			if usernameStr != "oas-ou-admin" && usernameStr != "oas-au-admin" {
 				response.Forbidden(c, "only OU/AU admin can execute")
 				return
 			}
-			
+
 			id, _ := parseUint(c.Param("id"))
 			var approval ApprovalRequest
 			if err := database.First(&approval, id).Error; err != nil {
 				response.NotFound(c, "approval not found")
 				return
 			}
-			
+
 			if approval.Status != "approved" {
 				response.BadRequest(c, "approval is not approved")
 				return
 			}
-			
+
 			now := time.Now()
 			approval.Status = "executed"
 			approval.ExecutedAt = &now
-			
+
 			if err := database.Save(&approval).Error; err != nil {
 				response.InternalError(c, "execute failed: "+err.Error())
 				return
 			}
-			
+
 			// 审计日志
 			database.Create(&AuditLog{
 				UserID:      usernameStr,
@@ -1592,7 +1594,7 @@ func main() {
 				Environment: oasEnvStr,
 				Domain:      domainStr,
 			})
-			
+
 			response.OK(c, approval)
 		})
 
@@ -1601,30 +1603,30 @@ func main() {
 			username, _ := c.Get("username")
 			domain, _ := c.Get("domain")
 			oasEnv, _ := c.Get("oas_env")
-			
+
 			// 类型断言
 			usernameStr, _ := username.(string)
 			domainStr, _ := domain.(string)
 			oasEnvStr, _ := oasEnv.(string)
-			
+
 			// 白名单 B: SU/OU/AU
 			if !isInAdminWhitelistB(database, usernameStr) {
 				response.Forbidden(c, "only SU/OU/AU admin can delete approvals")
 				return
 			}
-			
+
 			id, _ := parseUint(c.Param("id"))
 			var approval ApprovalRequest
 			if err := database.First(&approval, id).Error; err != nil {
 				response.NotFound(c, "approval not found")
 				return
 			}
-			
+
 			if err := database.Delete(&approval).Error; err != nil {
 				response.InternalError(c, "delete failed: "+err.Error())
 				return
 			}
-			
+
 			// 审计日志
 			database.Create(&AuditLog{
 				UserID:      usernameStr,
@@ -1639,7 +1641,7 @@ func main() {
 				Environment: oasEnvStr,
 				Domain:      domainStr,
 			})
-			
+
 			response.OK(c, gin.H{"message": "approval deleted"})
 		})
 
@@ -1648,14 +1650,14 @@ func main() {
 			// 获取域注册信息
 			var domains []DomainRegistry
 			database.Order("domain_code").Find(&domains)
-			
+
 			// 获取服务注册信息
 			var services []ServiceRegistry
 			database.Order("service_name").Find(&services)
-			
+
 			// 构建所有权矩阵
 			matrix := make(map[string]interface{})
-			
+
 			// 域所有权
 			domainOwnership := make([]map[string]interface{}, 0)
 			for _, d := range domains {
@@ -1668,7 +1670,7 @@ func main() {
 				})
 			}
 			matrix["domains"] = domainOwnership
-			
+
 			// 服务归属
 			serviceOwnership := make([]map[string]interface{}, 0)
 			for _, s := range services {
@@ -1683,7 +1685,7 @@ func main() {
 						}
 					}
 				}
-				
+
 				serviceOwnership = append(serviceOwnership, map[string]interface{}{
 					"service_name": s.ServiceName,
 					"service_type": s.ServiceType,
@@ -1694,7 +1696,7 @@ func main() {
 				})
 			}
 			matrix["services"] = serviceOwnership
-			
+
 			// 如果无数据，返回默认框架
 			if len(domains) == 0 && len(services) == 0 {
 				matrix["note"] = "暂无注册数据，以下为默认映射框架"
@@ -1709,7 +1711,7 @@ func main() {
 					{"domain": "G", "name": "商务域", "owner": "GAM", "description": "商务管理"},
 				}
 			}
-			
+
 			response.OK(c, matrix)
 		})
 
@@ -1718,7 +1720,7 @@ func main() {
 		admin.GET("/admin-accounts", func(c *gin.Context) {
 			username, _ := c.Get("username")
 			usernameStr, _ := username.(string)
-			
+
 			// Check if it's an API key
 			authType, _ := c.Get("auth_type")
 			if authType != "api_key" {
@@ -1728,30 +1730,30 @@ func main() {
 					return
 				}
 			}
-			
+
 			var admins []OASUser
 			// Include all admin-level roles: OU, AU, SU
 			database.Where("role_code IN ?", []string{"OU", "AU", "SU"}).Find(&admins)
 			response.OK(c, admins)
 		})
-		
+
 		// 创建 admin 账号（仅 OU/AU）
 		admin.POST("/admin-accounts", func(c *gin.Context) {
 			username, _ := c.Get("username")
 			domain, _ := c.Get("domain")
 			oasEnv, _ := c.Get("oas_env")
-			
+
 			usernameStr, _ := username.(string)
 			domainStr, _ := domain.(string)
 			oasEnvStr, _ := oasEnv.(string)
-			
+
 			// Check if it's an API key or whitelist B
 			authType, _ := c.Get("auth_type")
-			if authType != "api_key" && !isInAdminWhitelistB(database,usernameStr) {
+			if authType != "api_key" && !isInAdminWhitelistB(database, usernameStr) {
 				response.Forbidden(c, "only OU/AU admin can create admin accounts")
 				return
 			}
-			
+
 			var req struct {
 				Username    string `json:"username" binding:"required"`
 				Password    string `json:"password" binding:"required"`
@@ -1762,13 +1764,13 @@ func main() {
 				response.BadRequest(c, "invalid request: "+err.Error())
 				return
 			}
-			
+
 			// 仅允许 OU/AU 角色
 			if req.RoleCode != "OU" && req.RoleCode != "AU" {
 				response.BadRequest(c, "role_code must be OU or AU")
 				return
 			}
-			
+
 			// 检查用户名是否已存在
 			var count int64
 			database.Model(&OASUser{}).Where("username = ?", req.Username).Count(&count)
@@ -1776,17 +1778,17 @@ func main() {
 				response.BadRequest(c, "username already exists")
 				return
 			}
-			
+
 			// 生成 user_code
 			userCode := fmt.Sprintf("XHPZ#%s-%d", req.RoleCode, time.Now().UnixNano()%100000000)
-			
+
 			// 密码哈希
 			passwordHash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
 			if err != nil {
 				response.InternalError(c, "password hash failed: "+err.Error())
 				return
 			}
-			
+
 			user := OASUser{
 				Username:     req.Username,
 				UserCode:     userCode,
@@ -1796,12 +1798,12 @@ func main() {
 				Status:       "active",
 				Domain:       domainStr,
 			}
-			
+
 			if err := database.Create(&user).Error; err != nil {
 				response.InternalError(c, "create failed: "+err.Error())
 				return
 			}
-			
+
 			// 审计日志
 			database.Create(&AuditLog{
 				UserID:      usernameStr,
@@ -1816,44 +1818,44 @@ func main() {
 				Environment: oasEnvStr,
 				Domain:      domainStr,
 			})
-			
+
 			response.OK(c, user)
 		})
-		
+
 		// 禁用 admin 账号（仅 OU/AU）
 		admin.PUT("/admin-accounts/:id/disable", func(c *gin.Context) {
 			username, _ := c.Get("username")
 			domain, _ := c.Get("domain")
 			oasEnv, _ := c.Get("oas_env")
-			
+
 			usernameStr, _ := username.(string)
 			domainStr, _ := domain.(string)
 			oasEnvStr, _ := oasEnv.(string)
-			
+
 			if usernameStr != "oas-ou-admin" && usernameStr != "oas-au-admin" {
 				response.Forbidden(c, "only OU/AU admin can disable admin accounts")
 				return
 			}
-			
+
 			id, _ := parseUint(c.Param("id"))
 			var user OASUser
 			if err := database.First(&user, id).Error; err != nil {
 				response.NotFound(c, "user not found")
 				return
 			}
-			
+
 			// 只能禁用 OU/AU 账号
 			if user.RoleCode != "OU" && user.RoleCode != "AU" {
 				response.BadRequest(c, "can only disable OU/AU admin accounts")
 				return
 			}
-			
+
 			user.Status = "disabled"
 			if err := database.Save(&user).Error; err != nil {
 				response.InternalError(c, "disable failed: "+err.Error())
 				return
 			}
-			
+
 			// 审计日志
 			database.Create(&AuditLog{
 				UserID:      usernameStr,
@@ -1868,43 +1870,43 @@ func main() {
 				Environment: oasEnvStr,
 				Domain:      domainStr,
 			})
-			
+
 			response.OK(c, user)
 		})
-		
+
 		// 启用 admin 账号（仅 OU/AU）
 		admin.PUT("/admin-accounts/:id/enable", func(c *gin.Context) {
 			username, _ := c.Get("username")
 			domain, _ := c.Get("domain")
 			oasEnv, _ := c.Get("oas_env")
-			
+
 			usernameStr, _ := username.(string)
 			domainStr, _ := domain.(string)
 			oasEnvStr, _ := oasEnv.(string)
-			
+
 			if usernameStr != "oas-ou-admin" && usernameStr != "oas-au-admin" {
 				response.Forbidden(c, "only OU/AU admin can enable admin accounts")
 				return
 			}
-			
+
 			id, _ := parseUint(c.Param("id"))
 			var user OASUser
 			if err := database.First(&user, id).Error; err != nil {
 				response.NotFound(c, "user not found")
 				return
 			}
-			
+
 			if user.RoleCode != "OU" && user.RoleCode != "AU" {
 				response.BadRequest(c, "can only enable OU/AU admin accounts")
 				return
 			}
-			
+
 			user.Status = "active"
 			if err := database.Save(&user).Error; err != nil {
 				response.InternalError(c, "enable failed: "+err.Error())
 				return
 			}
-			
+
 			// 审计日志
 			database.Create(&AuditLog{
 				UserID:      usernameStr,
@@ -1919,37 +1921,37 @@ func main() {
 				Environment: oasEnvStr,
 				Domain:      domainStr,
 			})
-			
+
 			response.OK(c, user)
 		})
-		
+
 		// 重置密码（仅 OU/AU）
 		admin.PUT("/admin-accounts/:id/reset-password", func(c *gin.Context) {
 			username, _ := c.Get("username")
 			domain, _ := c.Get("domain")
 			oasEnv, _ := c.Get("oas_env")
-			
+
 			usernameStr, _ := username.(string)
 			domainStr, _ := domain.(string)
 			oasEnvStr, _ := oasEnv.(string)
-			
+
 			if usernameStr != "oas-ou-admin" && usernameStr != "oas-au-admin" {
 				response.Forbidden(c, "only OU/AU admin can reset passwords")
 				return
 			}
-			
+
 			id, _ := parseUint(c.Param("id"))
 			var user OASUser
 			if err := database.First(&user, id).Error; err != nil {
 				response.NotFound(c, "user not found")
 				return
 			}
-			
+
 			if user.RoleCode != "OU" && user.RoleCode != "AU" {
 				response.BadRequest(c, "can only reset OU/AU admin passwords")
 				return
 			}
-			
+
 			var req struct {
 				NewPassword string `json:"new_password" binding:"required"`
 			}
@@ -1957,19 +1959,19 @@ func main() {
 				response.BadRequest(c, "invalid request: "+err.Error())
 				return
 			}
-			
+
 			passwordHash, err := bcrypt.GenerateFromPassword([]byte(req.NewPassword), bcrypt.DefaultCost)
 			if err != nil {
 				response.InternalError(c, "password hash failed: "+err.Error())
 				return
 			}
-			
+
 			user.PasswordHash = string(passwordHash)
 			if err := database.Save(&user).Error; err != nil {
 				response.InternalError(c, "reset password failed: "+err.Error())
 				return
 			}
-			
+
 			// 审计日志
 			database.Create(&AuditLog{
 				UserID:      usernameStr,
@@ -1984,7 +1986,7 @@ func main() {
 				Environment: oasEnvStr,
 				Domain:      domainStr,
 			})
-			
+
 			response.OK(c, gin.H{"message": "password reset successfully"})
 		})
 
@@ -1992,13 +1994,13 @@ func main() {
 		admin.GET("/system-config", func(c *gin.Context) {
 			username, _ := c.Get("username")
 			usernameStr, _ := username.(string)
-			
+
 			// 白名单 B: SU/OU/AU
 			if !isInAdminWhitelistB(database, usernameStr) {
 				response.Forbidden(c, "only SU/OU/AU admin can view system config")
 				return
 			}
-			
+
 			// 读取环境变量（非敏感项）
 			appEnv := os.Getenv("APP_ENV")
 			if appEnv == "" {
@@ -2012,17 +2014,17 @@ func main() {
 			if dbDriver == "" {
 				dbDriver = "sqlite"
 			}
-			
+
 			// 构建配置信息（不暴露敏感项）
 			config := gin.H{
-				"app_env":     appEnv,
-				"oas_env":     oasEnv,
-				"db_driver":   dbDriver,
-				"go_version":  runtime.Version(),
-				"build_time":  "2026-09-08", // 可改为实际构建时间
-				"git_commit":  "fa6cb5d",    // 可改为实际 commit
+				"app_env":    appEnv,
+				"oas_env":    oasEnv,
+				"db_driver":  dbDriver,
+				"go_version": runtime.Version(),
+				"build_time": "2026-09-08", // 可改为实际构建时间
+				"git_commit": "fa6cb5d",    // 可改为实际 commit
 			}
-			
+
 			response.OK(c, config)
 		})
 
@@ -2061,7 +2063,7 @@ func main() {
 		admin.PUT("/services/:id/heartbeat", func(c *gin.Context) {
 			now := time.Now()
 			database.Model(&ServiceRegistry{}).Where("id = ?", c.Param("id")).Updates(map[string]interface{}{
-				"status":      "healthy",
+				"status":       "healthy",
 				"last_seen_at": &now,
 			})
 			response.OK(c, nil)
@@ -2071,7 +2073,7 @@ func main() {
 		// API Key 全生命周期管理 — 白名单 B (OU/AU)
 		admin.GET("/api-keys", func(c *gin.Context) {
 			username, _ := c.Get("username")
-			if !isInAdminWhitelistB(database,username.(string)) {
+			if !isInAdminWhitelistB(database, username.(string)) {
 				response.Forbidden(c, "access denied")
 				c.Abort()
 				return
@@ -2080,10 +2082,10 @@ func main() {
 			database.Order("created_at DESC").Find(&items)
 			response.OK(c, items)
 		})
-		
+
 		admin.GET("/api-keys/:id", func(c *gin.Context) {
 			username, _ := c.Get("username")
-			if !isInAdminWhitelistB(database,username.(string)) {
+			if !isInAdminWhitelistB(database, username.(string)) {
 				response.Forbidden(c, "access denied")
 				c.Abort()
 				return
@@ -2096,15 +2098,15 @@ func main() {
 			}
 			response.OK(c, k)
 		})
-		
+
 		admin.POST("/api-keys", func(c *gin.Context) {
 			username, _ := c.Get("username")
-			if !isInAdminWhitelistB(database,username.(string)) {
+			if !isInAdminWhitelistB(database, username.(string)) {
 				response.Forbidden(c, "access denied")
 				c.Abort()
 				return
 			}
-			
+
 			var req struct {
 				KeyName   string     `json:"key_name"`
 				Scopes    string     `json:"scopes"`
@@ -2114,19 +2116,19 @@ func main() {
 				response.BadRequest(c, "invalid request")
 				return
 			}
-			
+
 			// Generate API key: prefix + random part
 			prefix := "oas_" + fmt.Sprintf("%d", time.Now().UnixNano()%10000)
 			randomPart := fmt.Sprintf("%x", time.Now().UnixNano()) + fmt.Sprintf("%x", big.NewInt(time.Now().UnixNano()).Int64())
 			fullKey := prefix + "_" + randomPart[:32]
-			
+
 			// Hash the key
 			hash, err := bcrypt.GenerateFromPassword([]byte(fullKey), bcrypt.DefaultCost)
 			if err != nil {
 				response.InternalError(c, "failed to hash key")
 				return
 			}
-			
+
 			k := APIKey{
 				KeyName:   req.KeyName,
 				KeyPrefix: prefix,
@@ -2137,7 +2139,7 @@ func main() {
 				CreatedBy: username.(string),
 			}
 			database.Create(&k)
-			
+
 			// Audit log
 			database.Create(&AuditLog{
 				UserID:     username.(string),
@@ -2149,7 +2151,7 @@ func main() {
 				Detail:     fmt.Sprintf("created api key: %s", req.KeyName),
 				Domain:     "OAS",
 			})
-			
+
 			// Return full key only once
 			response.Created(c, gin.H{
 				"id":         k.ID,
@@ -2162,38 +2164,38 @@ func main() {
 				"message":    "Save this key now. You won't be able to see it again.",
 			})
 		})
-		
+
 		admin.PUT("/api-keys/:id/rotate", func(c *gin.Context) {
 			username, _ := c.Get("username")
-			if !isInAdminWhitelistB(database,username.(string)) {
+			if !isInAdminWhitelistB(database, username.(string)) {
 				response.Forbidden(c, "access denied")
 				c.Abort()
 				return
 			}
-			
+
 			id := c.Param("id")
 			var oldKey APIKey
 			if err := database.First(&oldKey, id).Error; err != nil {
 				response.NotFound(c, "key not found")
 				return
 			}
-			
+
 			if oldKey.Status != "active" {
 				response.BadRequest(c, "can only rotate active keys")
 				return
 			}
-			
+
 			// Generate new key
 			prefix := "oas_" + fmt.Sprintf("%d", time.Now().UnixNano()%10000)
 			randomPart := fmt.Sprintf("%x", time.Now().UnixNano()) + fmt.Sprintf("%x", big.NewInt(time.Now().UnixNano()).Int64())
 			fullKey := prefix + "_" + randomPart[:32]
-			
+
 			hash, err := bcrypt.GenerateFromPassword([]byte(fullKey), bcrypt.DefaultCost)
 			if err != nil {
 				response.InternalError(c, "failed to hash key")
 				return
 			}
-			
+
 			// Atomic rotation: disable old key + create new key
 			newKey := APIKey{
 				KeyName:   oldKey.KeyName + " (rotated)",
@@ -2204,7 +2206,7 @@ func main() {
 				Status:    "active",
 				CreatedBy: username.(string),
 			}
-			
+
 			// Transaction for atomicity
 			tx := database.Begin()
 			if err := tx.Model(&APIKey{}).Where("id = ?", oldKey.ID).Update("status", "disabled").Error; err != nil {
@@ -2218,7 +2220,7 @@ func main() {
 				return
 			}
 			tx.Commit()
-			
+
 			// Audit log
 			database.Create(&AuditLog{
 				UserID:     username.(string),
@@ -2230,7 +2232,7 @@ func main() {
 				Detail:     fmt.Sprintf("rotated api key from id=%d to id=%d", oldKey.ID, newKey.ID),
 				Domain:     "OAS",
 			})
-			
+
 			response.OK(c, gin.H{
 				"id":         newKey.ID,
 				"key_name":   newKey.KeyName,
@@ -2243,24 +2245,24 @@ func main() {
 				"message":    "Key rotated. Old key disabled. Save new key now.",
 			})
 		})
-		
+
 		admin.PUT("/api-keys/:id/disable", func(c *gin.Context) {
 			username, _ := c.Get("username")
-			if !isInAdminWhitelistB(database,username.(string)) {
+			if !isInAdminWhitelistB(database, username.(string)) {
 				response.Forbidden(c, "access denied")
 				c.Abort()
 				return
 			}
-			
+
 			id := c.Param("id")
 			var k APIKey
 			if err := database.First(&k, id).Error; err != nil {
 				response.NotFound(c, "key not found")
 				return
 			}
-			
+
 			database.Model(&k).Update("status", "disabled")
-			
+
 			// Audit log
 			database.Create(&AuditLog{
 				UserID:     username.(string),
@@ -2272,33 +2274,33 @@ func main() {
 				Detail:     fmt.Sprintf("disabled api key: %s", k.KeyName),
 				Domain:     "OAS",
 			})
-			
+
 			response.OK(c, gin.H{"message": "key disabled"})
 		})
-		
+
 		admin.PUT("/api-keys/:id/enable", func(c *gin.Context) {
 			username, _ := c.Get("username")
-			if !isInAdminWhitelistB(database,username.(string)) {
+			if !isInAdminWhitelistB(database, username.(string)) {
 				response.Forbidden(c, "access denied")
 				c.Abort()
 				return
 			}
-			
+
 			id := c.Param("id")
 			var k APIKey
 			if err := database.First(&k, id).Error; err != nil {
 				response.NotFound(c, "key not found")
 				return
 			}
-			
+
 			// Check expiry
 			if k.ExpiresAt != nil && k.ExpiresAt.Before(time.Now()) {
 				response.BadRequest(c, "cannot enable expired key")
 				return
 			}
-			
+
 			database.Model(&k).Update("status", "active")
-			
+
 			// Audit log
 			database.Create(&AuditLog{
 				UserID:     username.(string),
@@ -2310,27 +2312,27 @@ func main() {
 				Detail:     fmt.Sprintf("enabled api key: %s", k.KeyName),
 				Domain:     "OAS",
 			})
-			
+
 			response.OK(c, gin.H{"message": "key enabled"})
 		})
-		
+
 		admin.DELETE("/api-keys/:id", func(c *gin.Context) {
 			username, _ := c.Get("username")
-			if !isInAdminWhitelistB(database,username.(string)) {
+			if !isInAdminWhitelistB(database, username.(string)) {
 				response.Forbidden(c, "access denied")
 				c.Abort()
 				return
 			}
-			
+
 			id := c.Param("id")
 			var k APIKey
 			if err := database.First(&k, id).Error; err != nil {
 				response.NotFound(c, "key not found")
 				return
 			}
-			
+
 			database.Delete(&k)
-			
+
 			// Audit log
 			database.Create(&AuditLog{
 				UserID:     username.(string),
@@ -2342,14 +2344,14 @@ func main() {
 				Detail:     fmt.Sprintf("deleted api key: %s", k.KeyName),
 				Domain:     "OAS",
 			})
-			
+
 			response.OK(c, gin.H{"message": "key deleted"})
 		})
 
 		// Federation Node 联邦节点管理 — 白名单 B (OU/AU)
 		admin.GET("/federation-nodes", func(c *gin.Context) {
 			username, _ := c.Get("username")
-			if !isInAdminWhitelistB(database,username.(string)) {
+			if !isInAdminWhitelistB(database, username.(string)) {
 				response.Forbidden(c, "access denied")
 				c.Abort()
 				return
@@ -2358,10 +2360,10 @@ func main() {
 			database.Order("created_at DESC").Find(&items)
 			response.OK(c, items)
 		})
-		
+
 		admin.GET("/federation-nodes/:id", func(c *gin.Context) {
 			username, _ := c.Get("username")
-			if !isInAdminWhitelistB(database,username.(string)) {
+			if !isInAdminWhitelistB(database, username.(string)) {
 				response.Forbidden(c, "access denied")
 				c.Abort()
 				return
@@ -2374,31 +2376,31 @@ func main() {
 			}
 			response.OK(c, node)
 		})
-		
+
 		admin.POST("/federation-nodes", func(c *gin.Context) {
 			username, _ := c.Get("username")
-			if !isInAdminWhitelistB(database,username.(string)) {
+			if !isInAdminWhitelistB(database, username.(string)) {
 				response.Forbidden(c, "access denied")
 				c.Abort()
 				return
 			}
-			
+
 			var node FederationNode
 			if err := c.ShouldBindJSON(&node); err != nil {
 				response.BadRequest(c, "invalid request")
 				return
 			}
-			
+
 			// Validate trust level
 			if node.TrustLevel != "basic" && node.TrustLevel != "standard" && node.TrustLevel != "full" {
 				response.BadRequest(c, "trust_level must be basic, standard, or full")
 				return
 			}
-			
+
 			node.CreatedBy = username.(string)
 			node.Status = "active"
 			database.Create(&node)
-			
+
 			// Audit log
 			database.Create(&AuditLog{
 				UserID:     username.(string),
@@ -2410,25 +2412,25 @@ func main() {
 				Detail:     fmt.Sprintf("registered federation node: %s (trust: %s)", node.NodeName, node.TrustLevel),
 				Domain:     "OAS",
 			})
-			
+
 			response.Created(c, node)
 		})
-		
+
 		admin.PUT("/federation-nodes/:id", func(c *gin.Context) {
 			username, _ := c.Get("username")
-			if !isInAdminWhitelistB(database,username.(string)) {
+			if !isInAdminWhitelistB(database, username.(string)) {
 				response.Forbidden(c, "access denied")
 				c.Abort()
 				return
 			}
-			
+
 			id := c.Param("id")
 			var node FederationNode
 			if err := database.First(&node, id).Error; err != nil {
 				response.NotFound(c, "node not found")
 				return
 			}
-			
+
 			var req struct {
 				NodeName     string `json:"node_name"`
 				TrustLevel   string `json:"trust_level"`
@@ -2440,13 +2442,13 @@ func main() {
 				response.BadRequest(c, "invalid request")
 				return
 			}
-			
+
 			// Validate trust level
 			if req.TrustLevel != "" && req.TrustLevel != "basic" && req.TrustLevel != "standard" && req.TrustLevel != "full" {
 				response.BadRequest(c, "trust_level must be basic, standard, or full")
 				return
 			}
-			
+
 			updates := map[string]interface{}{}
 			if req.NodeName != "" {
 				updates["node_name"] = req.NodeName
@@ -2463,9 +2465,9 @@ func main() {
 			if req.Capabilities != "" {
 				updates["capabilities"] = req.Capabilities
 			}
-			
+
 			database.Model(&node).Updates(updates)
-			
+
 			// Audit log
 			database.Create(&AuditLog{
 				UserID:     username.(string),
@@ -2477,28 +2479,28 @@ func main() {
 				Detail:     fmt.Sprintf("updated federation node: %s", node.NodeName),
 				Domain:     "OAS",
 			})
-			
+
 			database.First(&node, id)
 			response.OK(c, node)
 		})
-		
+
 		admin.PUT("/federation-nodes/:id/suspend", func(c *gin.Context) {
 			username, _ := c.Get("username")
-			if !isInAdminWhitelistB(database,username.(string)) {
+			if !isInAdminWhitelistB(database, username.(string)) {
 				response.Forbidden(c, "access denied")
 				c.Abort()
 				return
 			}
-			
+
 			id := c.Param("id")
 			var node FederationNode
 			if err := database.First(&node, id).Error; err != nil {
 				response.NotFound(c, "node not found")
 				return
 			}
-			
+
 			database.Model(&node).Update("status", "suspended")
-			
+
 			// Audit log
 			database.Create(&AuditLog{
 				UserID:     username.(string),
@@ -2510,27 +2512,27 @@ func main() {
 				Detail:     fmt.Sprintf("suspended federation node: %s", node.NodeName),
 				Domain:     "OAS",
 			})
-			
+
 			response.OK(c, gin.H{"message": "node suspended"})
 		})
-		
-			admin.PUT("/federation-nodes/:id/activate", func(c *gin.Context) {
+
+		admin.PUT("/federation-nodes/:id/activate", func(c *gin.Context) {
 			username, _ := c.Get("username")
-			if !isInAdminWhitelistB(database,username.(string)) {
+			if !isInAdminWhitelistB(database, username.(string)) {
 				response.Forbidden(c, "access denied")
 				c.Abort()
 				return
 			}
-			
+
 			id := c.Param("id")
 			var node FederationNode
 			if err := database.First(&node, id).Error; err != nil {
 				response.NotFound(c, "node not found")
 				return
 			}
-			
+
 			database.Model(&node).Update("status", "active")
-			
+
 			// Audit log
 			database.Create(&AuditLog{
 				UserID:     username.(string),
@@ -2542,25 +2544,25 @@ func main() {
 				Detail:     fmt.Sprintf("activated federation node: %s", node.NodeName),
 				Domain:     "OAS",
 			})
-			
+
 			response.OK(c, gin.H{"message": "node activated"})
 		})
-		
+
 		admin.PUT("/federation-nodes/:id/trust", func(c *gin.Context) {
 			username, _ := c.Get("username")
-			if !isInAdminWhitelistB(database,username.(string)) {
+			if !isInAdminWhitelistB(database, username.(string)) {
 				response.Forbidden(c, "access denied")
 				c.Abort()
 				return
 			}
-			
+
 			id := c.Param("id")
 			var node FederationNode
 			if err := database.First(&node, id).Error; err != nil {
 				response.NotFound(c, "node not found")
 				return
 			}
-			
+
 			var req struct {
 				TrustLevel string `json:"trust_level" binding:"required"`
 			}
@@ -2568,16 +2570,16 @@ func main() {
 				response.BadRequest(c, "trust_level required")
 				return
 			}
-			
+
 			// Validate trust level
 			if req.TrustLevel != "basic" && req.TrustLevel != "standard" && req.TrustLevel != "full" {
 				response.BadRequest(c, "trust_level must be basic, standard, or full")
 				return
 			}
-			
+
 			oldTrust := node.TrustLevel
 			database.Model(&node).Update("trust_level", req.TrustLevel)
-			
+
 			// Audit log
 			database.Create(&AuditLog{
 				UserID:     username.(string),
@@ -2589,27 +2591,27 @@ func main() {
 				Detail:     fmt.Sprintf("changed trust level from %s to %s for node: %s", oldTrust, req.TrustLevel, node.NodeName),
 				Domain:     "OAS",
 			})
-			
+
 			response.OK(c, gin.H{"message": "trust level updated", "old_trust": oldTrust, "new_trust": req.TrustLevel})
 		})
-		
+
 		admin.DELETE("/federation-nodes/:id", func(c *gin.Context) {
 			username, _ := c.Get("username")
-			if !isInAdminWhitelistB(database,username.(string)) {
+			if !isInAdminWhitelistB(database, username.(string)) {
 				response.Forbidden(c, "access denied")
 				c.Abort()
 				return
 			}
-			
+
 			id := c.Param("id")
 			var node FederationNode
 			if err := database.First(&node, id).Error; err != nil {
 				response.NotFound(c, "node not found")
 				return
 			}
-			
+
 			database.Delete(&node)
-			
+
 			// Audit log
 			database.Create(&AuditLog{
 				UserID:     username.(string),
@@ -2621,101 +2623,354 @@ func main() {
 				Detail:     fmt.Sprintf("deleted federation node: %s", node.NodeName),
 				Domain:     "OAS",
 			})
-			
+
 			response.OK(c, gin.H{"message": "node deleted"})
 		})
 
+		// OAuth 客户端管理 — 白名单 B (OU/AU)
+		admin.GET("/oauth-clients", func(c *gin.Context) {
+			username, _ := c.Get("username")
+			if !isInAdminWhitelistB(database, username.(string)) {
+				response.Forbidden(c, "access denied")
+				c.Abort()
+				return
+			}
+			var clients []OAuthClient
+			database.Order("created_at DESC").Find(&clients)
+			response.OK(c, clients)
+		})
+
+		admin.GET("/oauth-clients/:id", func(c *gin.Context) {
+			username, _ := c.Get("username")
+			if !isInAdminWhitelistB(database, username.(string)) {
+				response.Forbidden(c, "access denied")
+				c.Abort()
+				return
+			}
+			id := c.Param("id")
+			var client OAuthClient
+			if err := database.First(&client, id).Error; err != nil {
+				response.NotFound(c, "client not found")
+				return
+			}
+			response.OK(c, client)
+		})
+
+		admin.POST("/oauth-clients", func(c *gin.Context) {
+			username, _ := c.Get("username")
+			if !isInAdminWhitelistB(database, username.(string)) {
+				response.Forbidden(c, "access denied")
+				c.Abort()
+				return
+			}
+
+			var req struct {
+				ClientName  string `json:"client_name"`
+				RedirectURI string `json:"redirect_uri"`
+				Scopes      string `json:"scopes"`
+			}
+			if err := c.ShouldBindJSON(&req); err != nil {
+				response.BadRequest(c, "invalid request")
+				return
+			}
+			if req.ClientName == "" || req.RedirectURI == "" {
+				response.BadRequest(c, "client_name and redirect_uri required")
+				return
+			}
+
+			// Generate client_id and client_secret
+			clientID := "oauth_" + fmt.Sprintf("%d", time.Now().UnixNano()%100000) + "_" + fmt.Sprintf("%x", time.Now().UnixNano()%0xFFFFFF)
+			plainSecret := "ocs_" + fmt.Sprintf("%x", time.Now().UnixNano()) + fmt.Sprintf("%x", time.Now().UnixNano()%0xFFFFFF)
+			hashedSecret, _ := password.Hash(plainSecret)
+
+			if req.Scopes == "" {
+				req.Scopes = "openid profile email"
+			}
+
+			client := OAuthClient{
+				ClientID:     clientID,
+				ClientName:   req.ClientName,
+				ClientSecret: string(hashedSecret),
+				RedirectURI:  req.RedirectURI,
+				Scopes:       req.Scopes,
+				Status:       "active",
+				CreatedBy:    username.(string),
+			}
+			if err := database.Create(&client).Error; err != nil {
+				response.InternalError(c, "failed to create client")
+				return
+			}
+
+			// Audit log
+			database.Create(&AuditLog{
+				UserID:     username.(string),
+				UserName:   username.(string),
+				Plane:      "admin",
+				Action:     "oauth.client.create",
+				Resource:   "oauth_client",
+				ResourceID: clientID,
+				Detail:     fmt.Sprintf("created OAuth client: %s (%s)", req.ClientName, clientID),
+				Domain:     "OAS",
+			})
+
+			// Return client with plain secret (only shown once)
+			response.OK(c, gin.H{
+				"client":        client,
+				"client_secret": plainSecret,
+				"message":       "Save the client_secret now. It will not be shown again.",
+			})
+		})
+
+		admin.PUT("/oauth-clients/:id", func(c *gin.Context) {
+			username, _ := c.Get("username")
+			if !isInAdminWhitelistB(database, username.(string)) {
+				response.Forbidden(c, "access denied")
+				c.Abort()
+				return
+			}
+
+			id := c.Param("id")
+			var client OAuthClient
+			if err := database.First(&client, id).Error; err != nil {
+				response.NotFound(c, "client not found")
+				return
+			}
+
+			var req struct {
+				ClientName  string `json:"client_name"`
+				RedirectURI string `json:"redirect_uri"`
+				Scopes      string `json:"scopes"`
+			}
+			if err := c.ShouldBindJSON(&req); err != nil {
+				response.BadRequest(c, "invalid request")
+				return
+			}
+
+			updates := map[string]interface{}{}
+			if req.ClientName != "" {
+				updates["client_name"] = req.ClientName
+			}
+			if req.RedirectURI != "" {
+				updates["redirect_uri"] = req.RedirectURI
+			}
+			if req.Scopes != "" {
+				updates["scopes"] = req.Scopes
+			}
+
+			database.Model(&client).Updates(updates)
+
+			// Audit log
+			database.Create(&AuditLog{
+				UserID:     username.(string),
+				UserName:   username.(string),
+				Plane:      "admin",
+				Action:     "oauth.client.update",
+				Resource:   "oauth_client",
+				ResourceID: client.ClientID,
+				Detail:     fmt.Sprintf("updated OAuth client: %s", client.ClientName),
+				Domain:     "OAS",
+			})
+
+			database.First(&client, id)
+			response.OK(c, client)
+		})
+
+		admin.PUT("/oauth-clients/:id/regenerate-secret", func(c *gin.Context) {
+			username, _ := c.Get("username")
+			if !isInAdminWhitelistB(database, username.(string)) {
+				response.Forbidden(c, "access denied")
+				c.Abort()
+				return
+			}
+
+			id := c.Param("id")
+			var client OAuthClient
+			if err := database.First(&client, id).Error; err != nil {
+				response.NotFound(c, "client not found")
+				return
+			}
+
+			// Generate new secret
+			plainSecret := "ocs_" + fmt.Sprintf("%x", time.Now().UnixNano()) + fmt.Sprintf("%x", time.Now().UnixNano()%0xFFFFFF)
+			hashedSecret, _ := password.Hash(plainSecret)
+
+			database.Model(&client).Update("client_secret", string(hashedSecret))
+
+			// Audit log
+			database.Create(&AuditLog{
+				UserID:     username.(string),
+				UserName:   username.(string),
+				Plane:      "admin",
+				Action:     "oauth.client.rotate_secret",
+				Resource:   "oauth_client",
+				ResourceID: client.ClientID,
+				Detail:     fmt.Sprintf("regenerated secret for OAuth client: %s", client.ClientName),
+				Domain:     "OAS",
+			})
+
+			response.OK(c, gin.H{
+				"client_secret": plainSecret,
+				"message":       "Save the new client_secret now. It will not be shown again.",
+			})
+		})
+
+		admin.PUT("/oauth-clients/:id/suspend", func(c *gin.Context) {
+			username, _ := c.Get("username")
+			if !isInAdminWhitelistB(database, username.(string)) {
+				response.Forbidden(c, "access denied")
+				c.Abort()
+				return
+			}
+
+			id := c.Param("id")
+			var client OAuthClient
+			if err := database.First(&client, id).Error; err != nil {
+				response.NotFound(c, "client not found")
+				return
+			}
+
+			database.Model(&client).Update("status", "inactive")
+
+			// Audit log
+			database.Create(&AuditLog{
+				UserID:     username.(string),
+				UserName:   username.(string),
+				Plane:      "admin",
+				Action:     "oauth.client.suspend",
+				Resource:   "oauth_client",
+				ResourceID: client.ClientID,
+				Detail:     fmt.Sprintf("suspended OAuth client: %s", client.ClientName),
+				Domain:     "OAS",
+			})
+
+			response.OK(c, gin.H{"message": "client suspended"})
+		})
+
+		admin.PUT("/oauth-clients/:id/activate", func(c *gin.Context) {
+			username, _ := c.Get("username")
+			if !isInAdminWhitelistB(database, username.(string)) {
+				response.Forbidden(c, "access denied")
+				c.Abort()
+				return
+			}
+
+			id := c.Param("id")
+			var client OAuthClient
+			if err := database.First(&client, id).Error; err != nil {
+				response.NotFound(c, "client not found")
+				return
+			}
+
+			database.Model(&client).Update("status", "active")
+
+			// Audit log
+			database.Create(&AuditLog{
+				UserID:     username.(string),
+				UserName:   username.(string),
+				Plane:      "admin",
+				Action:     "oauth.client.activate",
+				Resource:   "oauth_client",
+				ResourceID: client.ClientID,
+				Detail:     fmt.Sprintf("activated OAuth client: %s", client.ClientName),
+				Domain:     "OAS",
+			})
+
+			response.OK(c, gin.H{"message": "client activated"})
+		})
+
+		admin.DELETE("/oauth-clients/:id", func(c *gin.Context) {
+			username, _ := c.Get("username")
+			if !isInAdminWhitelistB(database, username.(string)) {
+				response.Forbidden(c, "access denied")
+				c.Abort()
+				return
+			}
+
+			id := c.Param("id")
+			var client OAuthClient
+			if err := database.First(&client, id).Error; err != nil {
+				response.NotFound(c, "client not found")
+				return
+			}
+
+			database.Delete(&client)
+
+			// Audit log
+			database.Create(&AuditLog{
+				UserID:     username.(string),
+				UserName:   username.(string),
+				Plane:      "admin",
+				Action:     "oauth.client.delete",
+				Resource:   "oauth_client",
+				ResourceID: client.ClientID,
+				Detail:     fmt.Sprintf("deleted OAuth client: %s", client.ClientName),
+				Domain:     "OAS",
+			})
+
+			response.OK(c, gin.H{"message": "client deleted"})
+		})
+
 		// 审计日志路由组 — 白名单 A + XAM 角色放行，handler 内再做细粒度检查
-	adminAuditLogs := api.Group("/admin/audit-logs", func(c *gin.Context) {
-		// Try API Key first
-		var apiKeyStr string
-		
-		// Check Authorization header (Bearer)
-		authHeader := c.GetHeader("Authorization")
-		if strings.HasPrefix(authHeader, "Bearer ") {
-			apiKeyStr = authHeader[7:]
-		}
-		
-		// Check X-API-Key header
-		if apiKeyStr == "" {
-			apiKeyStr = c.GetHeader("X-API-Key")
-		}
-		
-		// Check api_key query parameter
-		if apiKeyStr == "" {
-			apiKeyStr = c.Query("api_key")
-		}
-		
-		if apiKeyStr != "" {
-			// Extract prefix (first part before _)
-			parts := strings.SplitN(apiKeyStr, "_", 3)
-			if len(parts) >= 2 {
-				prefix := parts[0] + "_" + parts[1]
-				
-				// Look up API key by prefix
-				var key APIKey
-				if err := database.Where("key_prefix = ?", prefix).First(&key).Error; err == nil {
-					// Check status
-					if key.Status == "active" {
-						// Check expiry
-						if key.ExpiresAt == nil || !key.ExpiresAt.Before(time.Now()) {
-							// Verify key hash
-							if err := bcrypt.CompareHashAndPassword([]byte(key.KeyHash), []byte(apiKeyStr)); err == nil {
-								// API Key auth succeeded
-								c.Set("api_key_id", key.ID)
-								c.Set("api_key_name", key.KeyName)
-								c.Set("api_key_scopes", key.Scopes)
-								c.Set("auth_type", "api_key")
-								c.Set("username", "api-key:"+key.KeyName)
-								c.Next()
-								return
+		adminAuditLogs := api.Group("/admin/audit-logs", func(c *gin.Context) {
+			// Try API Key first
+			var apiKeyStr string
+
+			// Check Authorization header (Bearer)
+			authHeader := c.GetHeader("Authorization")
+			if strings.HasPrefix(authHeader, "Bearer ") {
+				apiKeyStr = authHeader[7:]
+			}
+
+			// Check X-API-Key header
+			if apiKeyStr == "" {
+				apiKeyStr = c.GetHeader("X-API-Key")
+			}
+
+			// Check api_key query parameter
+			if apiKeyStr == "" {
+				apiKeyStr = c.Query("api_key")
+			}
+
+			if apiKeyStr != "" {
+				// Extract prefix (first part before _)
+				parts := strings.SplitN(apiKeyStr, "_", 3)
+				if len(parts) >= 2 {
+					prefix := parts[0] + "_" + parts[1]
+
+					// Look up API key by prefix
+					var key APIKey
+					if err := database.Where("key_prefix = ?", prefix).First(&key).Error; err == nil {
+						// Check status
+						if key.Status == "active" {
+							// Check expiry
+							if key.ExpiresAt == nil || !key.ExpiresAt.Before(time.Now()) {
+								// Verify key hash
+								if err := bcrypt.CompareHashAndPassword([]byte(key.KeyHash), []byte(apiKeyStr)); err == nil {
+									// API Key auth succeeded
+									c.Set("api_key_id", key.ID)
+									c.Set("api_key_name", key.KeyName)
+									c.Set("api_key_scopes", key.Scopes)
+									c.Set("auth_type", "api_key")
+									c.Set("username", "api-key:"+key.KeyName)
+									c.Next()
+									return
+								}
 							}
 						}
 					}
 				}
 			}
-		}
-		
-		// Otherwise, try JWT
-		middleware.JWTAuth(jwtVerifier, nil, log)(c)
-	}, func(c *gin.Context) {
-		// Allow API keys
-		authType, _ := c.Get("auth_type")
-		if authType == "api_key" {
-			c.Next()
-			return
-		}
-		
-		username, _ := c.Get("username")
-		rolesRaw, _ := c.Get("roles")
-		var roles []string
-		if rolesRaw != nil {
-			if rolesSlice, ok := rolesRaw.([]string); ok {
-				roles = rolesSlice
-			} else if rolesStr, ok := rolesRaw.(string); ok && rolesStr != "" {
-				roles = strings.Split(rolesStr, ",")
+
+			// Otherwise, try JWT
+			middleware.JWTAuth(jwtVerifier, nil, log)(c)
+		}, func(c *gin.Context) {
+			// Allow API keys
+			authType, _ := c.Get("auth_type")
+			if authType == "api_key" {
+				c.Next()
+				return
 			}
-		}
-		
-		isWhitelistA := isInAdminWhitelistA(database,username.(string))
-		isXAM := false
-		for _, role := range roles {
-			if role == "TAM" || role == "HAM" || role == "YAM" || role == "VAM" {
-				isXAM = true
-				break
-			}
-		}
-		
-		if !isWhitelistA && !isXAM {
-			response.Forbidden(c, "access denied")
-			c.Abort()
-			return
-		}
-		c.Next()
-	})
-	
-	// 审计日志 — 白名单 B (OU/AU) 全量 + XAM (T/H/Y/V) 本域 + OAM 不可读
-	adminAuditLogs.GET("", func(c *gin.Context) {
+
 			username, _ := c.Get("username")
 			rolesRaw, _ := c.Get("roles")
 			var roles []string
@@ -2726,9 +2981,8 @@ func main() {
 					roles = strings.Split(rolesStr, ",")
 				}
 			}
-			
-			// Check access: whitelist B (OU/AU) or XAM roles
-			isWhitelistB := isInAdminWhitelistB(database,username.(string))
+
+			isWhitelistA := isInAdminWhitelistA(database, username.(string))
 			isXAM := false
 			for _, role := range roles {
 				if role == "TAM" || role == "HAM" || role == "YAM" || role == "VAM" {
@@ -2736,17 +2990,48 @@ func main() {
 					break
 				}
 			}
-			
+
+			if !isWhitelistA && !isXAM {
+				response.Forbidden(c, "access denied")
+				c.Abort()
+				return
+			}
+			c.Next()
+		})
+
+		// 审计日志 — 白名单 B (OU/AU) 全量 + XAM (T/H/Y/V) 本域 + OAM 不可读
+		adminAuditLogs.GET("", func(c *gin.Context) {
+			username, _ := c.Get("username")
+			rolesRaw, _ := c.Get("roles")
+			var roles []string
+			if rolesRaw != nil {
+				if rolesSlice, ok := rolesRaw.([]string); ok {
+					roles = rolesSlice
+				} else if rolesStr, ok := rolesRaw.(string); ok && rolesStr != "" {
+					roles = strings.Split(rolesStr, ",")
+				}
+			}
+
+			// Check access: whitelist B (OU/AU) or XAM roles
+			isWhitelistB := isInAdminWhitelistB(database, username.(string))
+			isXAM := false
+			for _, role := range roles {
+				if role == "TAM" || role == "HAM" || role == "YAM" || role == "VAM" {
+					isXAM = true
+					break
+				}
+			}
+
 			if !isWhitelistB && !isXAM {
 				response.Forbidden(c, "audit logs restricted to OU/AU admin or XAM roles")
 				return
 			}
-			
+
 			var items []AuditLog
 			page, _ := parseInt(c.DefaultQuery("page", "1"))
 			size, _ := parseInt(c.DefaultQuery("size", "20"))
 			q := database.Model(&AuditLog{})
-			
+
 			// XAM users can only see their own domain's audit logs
 			if isXAM && !isWhitelistB {
 				domain, _ := c.Get("domain")
@@ -2758,7 +3043,7 @@ func main() {
 					return
 				}
 			}
-			
+
 			if uid := c.Query("user_id"); uid != "" {
 				q = q.Where("user_id = ?", uid)
 			}
@@ -2912,7 +3197,7 @@ func main() {
 		}
 		// Check whitelist A
 		username := claims.Username
-		if !isInAdminWhitelistA(database,username) {
+		if !isInAdminWhitelistA(database, username) {
 			c.Header("Content-Type", "text/html; charset=utf-8")
 			c.String(403, "<h1>403 Forbidden</h1><p>Access restricted to system administrators.</p>")
 			return
@@ -2945,7 +3230,7 @@ func main() {
 			return
 		}
 		username := claims.Username
-		if !isInAdminWhitelistA(database,username) {
+		if !isInAdminWhitelistA(database, username) {
 			c.Header("Content-Type", "text/html; charset=utf-8")
 			c.String(403, "<h1>403 Forbidden</h1><p>Access restricted to system administrators.</p>")
 			return
@@ -2977,7 +3262,7 @@ func main() {
 			return
 		}
 		username := claims.Username
-		if !isInAdminWhitelistA(database,username) {
+		if !isInAdminWhitelistA(database, username) {
 			c.Header("Content-Type", "text/html; charset=utf-8")
 			c.String(403, "<h1>403 Forbidden</h1><p>Access restricted to system administrators.</p>")
 			return
@@ -3008,7 +3293,7 @@ func main() {
 			c.Redirect(302, "/login?redirect=/admin/ownership")
 			return
 		}
-		if !isInAdminWhitelistA(database,claims.Username) {
+		if !isInAdminWhitelistA(database, claims.Username) {
 			c.Header("Content-Type", "text/html; charset=utf-8")
 			c.String(403, "<h1>403 Forbidden</h1><p>Access restricted to whitelist A (OU/AU/OAM).</p>")
 			return
@@ -3145,6 +3430,39 @@ func main() {
 		c.String(200, federationNodesPageHTML(claims.Username))
 	})
 
+	// ===== GET /admin/oauth-clients — OAuth 客户端管理页面（白名单 B：仅 OU/AU）=====
+	r.GET("/admin/oauth-clients", func(c *gin.Context) {
+		if jwtVerifier == nil {
+			response.InternalError(c, "JWT verifier not configured")
+			return
+		}
+		tokenStr := c.Query("token")
+		if tokenStr == "" {
+			auth := c.GetHeader("Authorization")
+			if len(auth) > 7 && auth[:7] == "Bearer " {
+				tokenStr = auth[7:]
+			}
+		}
+		if tokenStr == "" {
+			c.Redirect(302, "/login?redirect=/admin/oauth-clients")
+			return
+		}
+		claims, err := jwtVerifier.Verify(tokenStr)
+		if err != nil {
+			c.Redirect(302, "/login?redirect=/admin/oauth-clients")
+			return
+		}
+		// Whitelist B: only OU/AU admin can access
+		username := claims.Username
+		if !isInAdminWhitelistB(database, username) {
+			c.Header("Content-Type", "text/html; charset=utf-8")
+			c.String(403, "<h1>403 Forbidden</h1><p>Access restricted to OU/AU admin.</p>")
+			return
+		}
+		c.Header("Content-Type", "text/html; charset=utf-8")
+		c.String(200, oauthClientsPageHTML(username))
+	})
+
 	// ===== GET /admin/audit-logs — 审计日志页面（白名单 B：仅 2 admin）=====
 	r.GET("/admin/audit-logs", func(c *gin.Context) {
 		if jwtVerifier == nil {
@@ -3169,7 +3487,7 @@ func main() {
 		}
 		// Whitelist B: only OU/AU admin can access audit logs
 		username := claims.Username
-		if !isInAdminWhitelistB(database,username) {
+		if !isInAdminWhitelistB(database, username) {
 			c.Header("Content-Type", "text/html; charset=utf-8")
 			c.String(403, "<h1>403 Forbidden</h1><p>Audit logs restricted to OU/AU admin.</p>")
 			return
@@ -3362,7 +3680,7 @@ func main() {
 		}
 		// 白名单 B：创建 admin 账号仅 OU/AU admin 可操作
 		operatorUsername, _ := c.Get("username")
-		if isAdminAccount(req.Username) && !canOperateAdminAccount(database,fmt.Sprintf("%v", operatorUsername)) {
+		if isAdminAccount(req.Username) && !canOperateAdminAccount(database, fmt.Sprintf("%v", operatorUsername)) {
 			response.Forbidden(c, "only oas-ou-admin and oas-au-admin can create admin accounts")
 			return
 		}
@@ -3444,7 +3762,7 @@ func main() {
 		var targetUser OASUser
 		database.First(&targetUser, id)
 		operatorUsername, _ := c.Get("username")
-		if isAdminAccount(targetUser.Username) && !canOperateAdminAccount(database,fmt.Sprintf("%v", operatorUsername)) {
+		if isAdminAccount(targetUser.Username) && !canOperateAdminAccount(database, fmt.Sprintf("%v", operatorUsername)) {
 			response.Forbidden(c, "only oas-ou-admin and oas-au-admin can modify admin account roles")
 			return
 		}
@@ -3489,7 +3807,7 @@ func main() {
 		var targetUser OASUser
 		database.First(&targetUser, id)
 		operatorUsername, _ := c.Get("username")
-		if isAdminAccount(targetUser.Username) && !canOperateAdminAccount(database,fmt.Sprintf("%v", operatorUsername)) {
+		if isAdminAccount(targetUser.Username) && !canOperateAdminAccount(database, fmt.Sprintf("%v", operatorUsername)) {
 			response.Forbidden(c, "only oas-ou-admin and oas-au-admin can modify admin account status")
 			return
 		}
@@ -3577,13 +3895,13 @@ func main() {
 		var roles []OASRole
 		database.Order("role_code").Find(&roles)
 		type RoleDetail struct {
-			ID          uint64  `json:"id"`
-			RoleCode    string  `json:"role_code"`
-			Name        string  `json:"name"`
-			Description string  `json:"description"`
-			Permissions string  `json:"permissions"`
-			CreatedAt   string  `json:"created_at"`
-			UpdatedAt   string  `json:"updated_at"`
+			ID          uint64 `json:"id"`
+			RoleCode    string `json:"role_code"`
+			Name        string `json:"name"`
+			Description string `json:"description"`
+			Permissions string `json:"permissions"`
+			CreatedAt   string `json:"created_at"`
+			UpdatedAt   string `json:"updated_at"`
 		}
 		var result []RoleDetail
 		for _, r := range roles {
@@ -3721,7 +4039,7 @@ func main() {
 				roles = strings.Split(rolesStr, ",")
 			}
 		}
-		if !canAccessOrgManagement(database,fmt.Sprintf("%v", username), roles) {
+		if !canAccessOrgManagement(database, fmt.Sprintf("%v", username), roles) {
 			response.Forbidden(c, "access denied")
 			c.Abort()
 			return
@@ -3733,12 +4051,12 @@ func main() {
 		adminOrgs.GET("", func(c *gin.Context) {
 			var orgs []model.Organization
 			query := database.Preload("Parent").Preload("Children")
-			
+
 			// Apply domain filter if present
 			if filterDomain, ok := middleware.GetFilterDomain(c); ok && filterDomain != "" {
 				query = query.Where("domain = ?", filterDomain)
 			}
-			
+
 			if err := query.Find(&orgs).Error; err != nil {
 				response.InternalError(c, "load orgs failed: "+err.Error())
 				return
@@ -3762,12 +4080,12 @@ func main() {
 			id, _ := parseUint(c.Param("id"))
 			var org model.Organization
 			query := database.Preload("Parent").Preload("Children").Preload("Members")
-			
+
 			// Apply domain filter if present
 			if filterDomain, ok := middleware.GetFilterDomain(c); ok && filterDomain != "" {
 				query = query.Where("domain = ?", filterDomain)
 			}
-			
+
 			if err := query.First(&org, id).Error; err != nil {
 				response.NotFound(c, "org not found")
 				return
@@ -3913,7 +4231,7 @@ func main() {
 		// Get organization members
 		adminOrgs.GET("/:id/members", func(c *gin.Context) {
 			id, _ := parseUint(c.Param("id"))
-			
+
 			// First check if org exists and belongs to user's domain
 			var org model.Organization
 			orgQuery := database
@@ -3924,7 +4242,7 @@ func main() {
 				response.NotFound(c, "org not found")
 				return
 			}
-			
+
 			var members []model.UserOrganization
 			if err := database.Where("organization_id = ?", id).Find(&members).Error; err != nil {
 				response.InternalError(c, "load members failed: "+err.Error())
@@ -3936,7 +4254,7 @@ func main() {
 		// Add member to organization
 		adminOrgs.POST("/:id/members", func(c *gin.Context) {
 			id, _ := parseUint(c.Param("id"))
-			
+
 			// First check if org exists and belongs to user's domain
 			var org model.Organization
 			orgQuery := database
@@ -3947,7 +4265,7 @@ func main() {
 				response.NotFound(c, "org not found")
 				return
 			}
-			
+
 			var req struct {
 				UserID uint   `json:"user_id" binding:"required"`
 				Role   string `json:"role"`
@@ -3996,7 +4314,7 @@ func main() {
 		adminOrgs.DELETE("/:id/members/:userId", func(c *gin.Context) {
 			id, _ := parseUint(c.Param("id"))
 			userId, _ := parseUint(c.Param("userId"))
-			
+
 			// First check if org exists and belongs to user's domain
 			var org model.Organization
 			orgQuery := database
@@ -4007,7 +4325,7 @@ func main() {
 				response.NotFound(c, "org not found")
 				return
 			}
-			
+
 			var member model.UserOrganization
 			if err := database.Where("organization_id = ? AND user_id = ?", org.ID, userId).First(&member).Error; err != nil {
 				response.NotFound(c, "member not found")
@@ -4121,7 +4439,7 @@ func main() {
 			c.Redirect(302, "/login?redirect=/admin/orgs")
 			return
 		}
-		if !isInAdminWhitelistA(database,claims.Username) {
+		if !isInAdminWhitelistA(database, claims.Username) {
 			c.Header("Content-Type", "text/html; charset=utf-8")
 			c.String(403, "<h1>403 Forbidden</h1><p>Access denied. System management restricted to OU/AU/OAM admins.</p>")
 			return
@@ -4285,13 +4603,13 @@ func canOperateAdminAccount(db *gorm.DB, operatorUsername string) bool {
 	if strings.HasPrefix(operatorUsername, "api-key:") {
 		return true // API keys have admin-level access
 	}
-	
+
 	// Query user's role_code from database
 	var user OASUser
 	if err := db.Where("username = ?", operatorUsername).First(&user).Error; err != nil {
 		return false
 	}
-	
+
 	// SU/OU/AU are admin-level roles
 	return user.RoleCode == "SU" || user.RoleCode == "OU" || user.RoleCode == "AU"
 }
@@ -4307,13 +4625,13 @@ func isInAdminWhitelistA(db *gorm.DB, username string) bool {
 	if strings.HasPrefix(username, "api-key:") {
 		return true // API keys have admin-level access
 	}
-	
+
 	// Query user's role_code from database
 	var user OASUser
 	if err := db.Where("username = ?", username).First(&user).Error; err != nil {
 		return false
 	}
-	
+
 	// SU/OU/AU/OAM are admin-level roles for whitelist A
 	return user.RoleCode == "SU" || user.RoleCode == "OU" || user.RoleCode == "AU" || user.RoleCode == "OAM"
 }
@@ -4452,14 +4770,7 @@ func seedTestUsers(database *gorm.DB, log *zap.Logger, edition string) {
 		}
 	}
 
-	// 检查是否已有其他用户
-	var count int64
-	database.Model(&OASUser{}).Count(&count)
-	if count > 2 { // 已有除管理员外的用户
-		return
-	}
-
-	// Define test accounts for beta edition
+	// Define test accounts (always create if not exist, for quick-login)
 	type testAccount struct {
 		UserCode     string
 		Username     string
@@ -4470,20 +4781,15 @@ func seedTestUsers(database *gorm.DB, log *zap.Logger, edition string) {
 	}
 
 	accounts := []testAccount{
-		// 默认测试账号
+		// 默认测试账号（始终创建，供 quick-login 使用）
 		{UserCode: "XHPZ#SU-TEST001", Username: "admin", DisplayName: "系统管理员", IdentityType: "SU", RoleCode: "SU", RoleName: "System User"},
+		{UserCode: "XHPZ#AU-TEST001", Username: "operator", DisplayName: "运营人员", IdentityType: "AU", RoleCode: "AU", RoleName: "Admin User"},
+		{UserCode: "XHPZ#CU-TEST001", Username: "customer", DisplayName: "客户用户", IdentityType: "CU", RoleCode: "CU", RoleName: "Customer User"},
+		{UserCode: "XHPZ#GU-TEST001", Username: "viewer", DisplayName: "访客", IdentityType: "GU", RoleCode: "GU", RoleName: "Guest User"},
+		{UserCode: "XHPZ#EM-TEST001", Username: "em", DisplayName: "供给运营长", IdentityType: "EM", RoleCode: "EM", RoleName: "Enterprise Manager"},
 	}
 
-	// Beta edition: add more test accounts with different roles
-	if edition == "beta" {
-		accounts = append(accounts,
-			testAccount{UserCode: "XHPZ#AU-TEST001", Username: "operator", DisplayName: "运营人员", IdentityType: "AU", RoleCode: "AU", RoleName: "Admin User"},
-			testAccount{UserCode: "XHPZ#CU-TEST001", Username: "customer", DisplayName: "客户用户", IdentityType: "CU", RoleCode: "CU", RoleName: "Customer User"},
-			testAccount{UserCode: "XHPZ#GU-TEST001", Username: "viewer", DisplayName: "访客", IdentityType: "GU", RoleCode: "GU", RoleName: "Guest User"},
-			testAccount{UserCode: "XHPZ#EM-TEST001", Username: "em", DisplayName: "供给运营长", IdentityType: "EM", RoleCode: "EM", RoleName: "Enterprise Manager"},
-		)
-		log.Info("beta edition: seeding multiple test accounts")
-	}
+	log.Info("seeding test accounts for quick-login")
 
 	// Create roles and users
 	for _, acc := range accounts {
@@ -4504,31 +4810,51 @@ func seedTestUsers(database *gorm.DB, log *zap.Logger, edition string) {
 		}
 
 		// Create user
-		user := OASUser{
-			UserCode:     acc.UserCode,
-			Username:     acc.Username,
-			PasswordHash: hashStr,
-			DisplayName:  acc.DisplayName,
-			IdentityType: acc.IdentityType,
-			EntityType:   "H",
-			Status:       "active",
-		}
-		if err := database.Create(&user).Error; err != nil {
-			log.Error("failed to create user", zap.String("username", acc.Username), zap.Error(err))
-			continue
-		}
+		// Create user if not exists
+		var existingUser OASUser
+		database.Where("username = ?", acc.Username).First(&existingUser)
+		if existingUser.ID == 0 {
+			user := OASUser{
+				UserCode:     acc.UserCode,
+				Username:     acc.Username,
+				PasswordHash: hashStr,
+				DisplayName:  acc.DisplayName,
+				IdentityType: acc.IdentityType,
+				EntityType:   "H",
+				Status:       "active",
+				RoleCode:     acc.RoleCode,
+			}
+			if err := database.Create(&user).Error; err != nil {
+				log.Error("failed to create user", zap.String("username", acc.Username), zap.Error(err))
+				continue
+			}
 
-		// Assign role
-		assignment := OASUserRole{
-			UserID:    user.ID,
-			RoleID:    role.ID,
-			GrantedBy: "system-seed",
-			GrantedAt: time.Now(),
-		}
-		if err := database.Table("user_roles").Create(&assignment).Error; err != nil {
-			log.Error("failed to assign role", zap.String("username", acc.Username), zap.Error(err))
+			// Assign role
+			assignment := OASUserRole{
+				UserID:    user.ID,
+				RoleID:    role.ID,
+				GrantedBy: "system-seed",
+				GrantedAt: time.Now(),
+			}
+			if err := database.Table("user_roles").Create(&assignment).Error; err != nil {
+				log.Error("failed to assign role", zap.String("username", acc.Username), zap.Error(err))
+			} else {
+				log.Info("test user created", zap.String("username", acc.Username), zap.String("role", acc.RoleCode))
+			}
 		} else {
-			log.Info("test user created", zap.String("username", acc.Username), zap.String("role", acc.RoleCode))
+			// User exists, ensure role assignment exists
+			var existingAssignment OASUserRole
+			database.Where("user_id = ? AND role_id = ?", existingUser.ID, role.ID).First(&existingAssignment)
+			if existingAssignment.ID == 0 {
+				assignment := OASUserRole{
+					UserID:    existingUser.ID,
+					RoleID:    role.ID,
+					GrantedBy: "system-seed",
+					GrantedAt: time.Now(),
+				}
+				database.Table("user_roles").Create(&assignment)
+				log.Info("test user role assignment created", zap.String("username", acc.Username), zap.String("role", acc.RoleCode))
+			}
 		}
 	}
 
@@ -4644,7 +4970,7 @@ func loginPageHTML(redirect string, oasEnv envpolicy.Environment, devTokenEnable
 	}
 	oauthAttrs := ""
 	if oauthClientID != "" {
-		oauthAttrs = fmt.Sprintf(`data-oauth-client="%s" data-oauth-redirect-uri="%s" data-oauth-state="%s"`, 
+		oauthAttrs = fmt.Sprintf(`data-oauth-client="%s" data-oauth-redirect-uri="%s" data-oauth-state="%s"`,
 			oauthClientID, oauthRedirectURI, oauthState)
 	}
 	return `<!DOCTYPE html>
@@ -5048,7 +5374,7 @@ func approvalsPageHTML(username, oasEnv, token string) string {
 	if isOUAU {
 		canWrite = "true"
 	}
-	
+
 	return `<!DOCTYPE html>
 <html lang="zh">
 <head>
@@ -6133,6 +6459,165 @@ function deleteNode(id) {
 }
 
 loadNodes();
+</script>
+</body>
+</html>`
+}
+
+// oauthClientsPageHTML returns the OAuth clients management page HTML (whitelist B: only OU/AU).
+func oauthClientsPageHTML(username string) string {
+	return `<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>OAS OAuth 客户端管理</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:#f3f4f6;color:#111827}
+.header{background:#fff;border-bottom:1px solid #e5e7eb;padding:16px 24px;display:flex;align-items:center;justify-content:space-between}
+.header h1{font-size:18px;font-weight:600}
+.user-info{font-size:13px;color:#6b7280}
+.container{max-width:1200px;margin:24px auto;padding:0 24px}
+.card{background:#fff;border-radius:10px;box-shadow:0 1px 2px rgba(0,0,0,.06);padding:24px;margin-bottom:20px}
+.card h2{font-size:16px;font-weight:600;margin-bottom:16px}
+.btn{padding:8px 16px;border:none;border-radius:6px;font-size:13px;font-weight:500;cursor:pointer;transition:all .15s}
+.btn-primary{background:#3b82f6;color:#fff}.btn-primary:hover{background:#2563eb}
+.btn-danger{background:#ef4444;color:#fff}.btn-danger:hover{background:#dc2626}
+.btn-secondary{background:#e5e7eb;color:#374151}.btn-secondary:hover{background:#d1d5db}
+.btn-sm{padding:4px 10px;font-size:12px}
+table{width:100%;border-collapse:collapse}
+th,td{padding:10px 12px;text-align:left;border-bottom:1px solid #e5e7eb;font-size:13px}
+th{font-weight:600;color:#374151;background:#f9fafb}
+tr:hover{background:#f9fafb}
+.status-active{color:#059669;font-weight:500}
+.status-disabled{color:#dc2626;font-weight:500}
+.modal-overlay{display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.5);z-index:100;align-items:center;justify-content:center}
+.modal-overlay.active{display:flex}
+.modal{background:#fff;border-radius:12px;padding:24px;width:90%;max-width:500px;max-height:90vh;overflow-y:auto}
+.modal h3{font-size:16px;font-weight:600;margin-bottom:16px}
+.form-group{margin-bottom:14px}
+.form-group label{display:block;font-size:13px;font-weight:500;margin-bottom:4px;color:#374151}
+.form-group input,.form-group select,.form-group textarea{width:100%;padding:8px 12px;border:1px solid #d1d5db;border-radius:6px;font-size:13px}
+.form-group textarea{resize:vertical;min-height:60px}
+.form-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:16px}
+.secret-display{background:#f0fdf4;border:1px solid #86efac;border-radius:6px;padding:12px;margin-top:12px;font-family:monospace;font-size:12px;word-break:break-all}
+.empty{text-align:center;padding:40px;color:#9ca3af}
+</style>
+</head>
+<body>
+<div class="header">
+  <h1>知味 OAS · OAuth 客户端管理</h1>
+  <span class="user-info">` + username + `</span>
+</div>
+<div class="container">
+  <div class="card">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+      <h2 style="margin:0">客户端列表</h2>
+      <button class="btn btn-primary" onclick="showCreateModal()">+ 新建客户端</button>
+    </div>
+    <table>
+      <thead><tr><th>Client ID</th><th>名称</th><th>Redirect URI</th><th>Scopes</th><th>状态</th><th>操作</th></tr></thead>
+      <tbody id="clientTable"><tr><td colspan="6" class="empty">加载中...</td></tr></tbody>
+    </table>
+  </div>
+</div>
+
+<div class="modal-overlay" id="createModal">
+  <div class="modal">
+    <h3>新建 OAuth 客户端</h3>
+    <div class="form-group"><label>Client ID（留空自动生成）</label><input id="newClientId" placeholder="自动生成"></div>
+    <div class="form-group"><label>客户端名称</label><input id="newClientName" placeholder="如：My App"></div>
+    <div class="form-group"><label>Redirect URI</label><input id="newRedirectUri" placeholder="https://app.example.com/callback"></div>
+    <div class="form-group"><label>Scopes（空格分隔）</label><input id="newScopes" value="openid profile email"></div>
+    <div class="form-actions">
+      <button class="btn btn-secondary" onclick="hideCreateModal()">取消</button>
+      <button class="btn btn-primary" onclick="createClient()">创建</button>
+    </div>
+    <div id="secretResult" style="display:none"></div>
+  </div>
+</div>
+
+<script>
+const API = '';
+let allClients = [];
+
+async function loadClients() {
+  const r = await fetch(API + '/api/v1/admin/oauth-clients');
+  const d = await r.json();
+  if (d.code !== 200) { alert(d.message || 'load failed'); return; }
+  allClients = d.data || [];
+  renderClients(allClients);
+}
+
+function renderClients(clients) {
+  if (!clients || clients.length === 0) {
+    document.getElementById('clientTable').innerHTML = '<tr><td colspan="6" class="empty">暂无客户端</td></tr>';
+    return;
+  }
+  let html = '';
+  for (const c of clients) {
+    const statusClass = c.status === 'active' ? 'status-active' : 'status-disabled';
+    const statusText = c.status === 'active' ? '启用' : '禁用';
+    html += '<tr><td><code>' + c.client_id + '</code></td>' +
+      '<td>' + (c.client_name || '-') + '</td>' +
+      '<td>' + (c.redirect_uri || '-') + '</td>' +
+      '<td>' + (c.scopes || '-') + '</td>' +
+      '<td><span class="' + statusClass + '">' + statusText + '</span></td>' +
+      '<td>' +
+      '<button class="btn btn-sm btn-secondary" onclick="toggleStatus(\'' + c.client_id + '\',\'' + (c.status === 'active' ? 'disable' : 'enable') + '\')">' + (c.status === 'active' ? '禁用' : '启用') + '</button> ' +
+      '<button class="btn btn-sm btn-secondary" onclick="rotateSecret(\'' + c.client_id + '\')">轮换密钥</button> ' +
+      '<button class="btn btn-sm btn-danger" onclick="deleteClient(\'' + c.client_id + '\')">删除</button>' +
+      '</td></tr>';
+  }
+  document.getElementById('clientTable').innerHTML = html;
+}
+
+function showCreateModal() { document.getElementById('createModal').classList.add('active'); document.getElementById('secretResult').style.display = 'none'; }
+function hideCreateModal() { document.getElementById('createModal').classList.remove('active'); }
+
+async function createClient() {
+  const clientId = document.getElementById('newClientId').value.trim();
+  const clientName = document.getElementById('newClientName').value.trim();
+  const redirectUri = document.getElementById('newRedirectUri').value.trim();
+  const scopes = document.getElementById('newScopes').value.trim();
+  if (!clientName) { alert('请输入客户端名称'); return; }
+  if (!redirectUri) { alert('请输入 Redirect URI'); return; }
+  const body = { client_name: clientName, redirect_uri: redirectUri, scopes: scopes };
+  if (clientId) body.client_id = clientId;
+  const r = await fetch(API + '/api/v1/admin/oauth-clients', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  const d = await r.json();
+  if (d.code !== 200) { alert(d.message || 'create failed'); return; }
+  const result = document.getElementById('secretResult');
+  result.style.display = 'block';
+  result.innerHTML = '<div class="secret-display"><strong>Client ID:</strong> ' + d.data.client.client_id + '<br><strong>Client Secret:</strong> ' + d.data.client_secret + '<br><br><span style="color:#dc2626">⚠ 请妥善保存密钥，此密钥仅显示一次！</span></div>';
+  loadClients();
+}
+
+async function toggleStatus(clientId, action) {
+  const r = await fetch(API + '/api/v1/admin/oauth-clients/' + clientId + '/' + action, { method: 'PUT' });
+  const d = await r.json();
+  if (d.code !== 200) { alert(d.message || 'operation failed'); return; }
+  loadClients();
+}
+
+async function rotateSecret(clientId) {
+  if (!confirm('确认轮换此客户端的密钥？旧密钥将立即失效。')) return;
+  const r = await fetch(API + '/api/v1/admin/oauth-clients/' + clientId + '/rotate', { method: 'PUT' });
+  const d = await r.json();
+  if (d.code !== 200) { alert(d.message || 'rotate failed'); return; }
+  alert('新密钥: ' + d.data.new_client_secret + '\n\n请妥善保存，此密钥仅显示一次！');
+}
+
+async function deleteClient(clientId) {
+  if (!confirm('确认删除此客户端？此操作不可恢复。')) return;
+  const r = await fetch(API + '/api/v1/admin/oauth-clients/' + clientId, { method: 'DELETE' });
+  const d = await r.json();
+  if (d.code !== 200) { alert(d.message || 'delete failed'); return; }
+  loadClients();
+}
+
+loadClients();
 </script>
 </body>
 </html>`
