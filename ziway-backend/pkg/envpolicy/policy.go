@@ -43,9 +43,9 @@ func IsTestAccountsEnabled(env Environment) bool {
 }
 
 // IsDevTokenEnabled returns true if dev-token should be available
-// Only DEV environment allows dev-token (PROD always disabled, RC/BETA also disabled for safety)
+// DEV and BETA environments allow dev-token (PROD always disabled, RC also disabled for safety)
 func IsDevTokenEnabled(env Environment) bool {
-	return env == DEV
+	return env == DEV || env == BETA
 }
 
 // String returns the string representation
