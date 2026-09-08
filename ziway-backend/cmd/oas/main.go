@@ -6,7 +6,6 @@ import (
 	"encoding/pem"
 	"fmt"
 	"os"
-	"strings"
 	"time"
 
 	"go.uber.org/zap"
@@ -722,464 +721,43 @@ func main() {
 		adminRoles.Use(middleware.RequireUsers("oas-ou-admin", "oas-au-admin", "oas-oam-admin"))
 	}
 	// GET /api/v1/admin/roles — list all roles
-	adminRoles.GET("", func(c *gin.Context) {
-		var roles []oasmodel.OASRole
-		database.Order("role_code").Find(&roles)
-		type RoleDetail struct {
-			ID          uint64 `json:"id"`
-			RoleCode    string `json:"role_code"`
-			Name        string `json:"name"`
-			Description string `json:"description"`
-			Permissions string `json:"permissions"`
-			CreatedAt   string `json:"created_at"`
-			UpdatedAt   string `json:"updated_at"`
-		}
-		var result []RoleDetail
-		for _, r := range roles {
-			result = append(result, RoleDetail{
-				ID:          r.ID,
-				RoleCode:    r.RoleCode,
-				Name:        r.Name,
-				Description: r.Description,
-				Permissions: r.Permissions,
-				CreatedAt:   r.CreatedAt.Format(time.RFC3339),
-				UpdatedAt:   r.UpdatedAt.Format(time.RFC3339),
-			})
-		}
-		response.OK(c, gin.H{"items": result, "total": len(result)})
-	})
+	adminRoles.GET("", handlers.H.ListRoles)
 
 	// POST /api/v1/admin/roles — create role
-	adminRoles.POST("", func(c *gin.Context) {
-		var req struct {
-			RoleCode    string `json:"role_code" binding:"required"`
-			Name        string `json:"name" binding:"required"`
-			Description string `json:"description"`
-			Permissions string `json:"permissions"`
-		}
-		if err := c.ShouldBindJSON(&req); err != nil {
-			response.BadRequest(c, "invalid request: "+err.Error())
-			return
-		}
-		role := oasmodel.OASRole{
-			RoleCode:    req.RoleCode,
-			Name:        req.Name,
-			Description: req.Description,
-			Permissions: req.Permissions,
-		}
-		if err := database.Create(&role).Error; err != nil {
-			response.InternalError(c, "create role failed: "+err.Error())
-			return
-		}
-		// Audit log
-		operator, _ := c.Get("username")
-		database.Create(&oasmodel.AuditLog{
-			Action:     "role.create",
-			Plane:      "admin",
-			UserID:     fmt.Sprintf("%v", operator),
-			ResourceID: fmt.Sprintf("role-%d", role.ID),
-			Detail:     fmt.Sprintf("role_code=%s, name=%s", role.RoleCode, role.Name),
-			IP:         c.ClientIP(),
-		})
-		response.Created(c, gin.H{"id": role.ID, "role_code": role.RoleCode, "name": role.Name})
-	})
+	adminRoles.POST("", handlers.H.CreateRole)
 
 	// PUT /api/v1/admin/roles/:id — update role
-	adminRoles.PUT("/:id", func(c *gin.Context) {
-		id := c.Param("id")
-		var role oasmodel.OASRole
-		if err := database.First(&role, id).Error; err != nil {
-			response.NotFound(c, "role not found")
-			return
-		}
-		var req struct {
-			Name        string `json:"name"`
-			Description string `json:"description"`
-			Permissions string `json:"permissions"`
-		}
-		if err := c.ShouldBindJSON(&req); err != nil {
-			response.BadRequest(c, "invalid request: "+err.Error())
-			return
-		}
-		updates := map[string]interface{}{}
-		if req.Name != "" {
-			updates["name"] = req.Name
-		}
-		if req.Description != "" {
-			updates["description"] = req.Description
-		}
-		if req.Permissions != "" {
-			updates["permissions"] = req.Permissions
-		}
-		if len(updates) > 0 {
-			database.Model(&role).Updates(updates)
-		}
-		// Audit log
-		operator, _ := c.Get("username")
-		database.Create(&oasmodel.AuditLog{
-			Action:     "role.update",
-			Plane:      "admin",
-			UserID:     fmt.Sprintf("%v", operator),
-			ResourceID: fmt.Sprintf("role-%s", id),
-			Detail:     fmt.Sprintf("updates=%v", updates),
-			IP:         c.ClientIP(),
-		})
-		response.OK(c, gin.H{"message": "role updated"})
-	})
+	adminRoles.PUT("/:id", handlers.H.UpdateRole)
 
 	// DELETE /api/v1/admin/roles/:id — delete role
-	adminRoles.DELETE("/:id", func(c *gin.Context) {
-		id := c.Param("id")
-		var role oasmodel.OASRole
-		if err := database.First(&role, id).Error; err != nil {
-			response.NotFound(c, "role not found")
-			return
-		}
-		// Check if role is assigned to any users
-		var count int64
-		database.Table("user_roles").Where("role_id = ?", id).Count(&count)
-		if count > 0 {
-			response.BadRequest(c, fmt.Sprintf("role is assigned to %d users, cannot delete", count))
-			return
-		}
-		database.Delete(&role, id)
-		// Audit log
-		operator, _ := c.Get("username")
-		database.Create(&oasmodel.AuditLog{
-			Action:     "role.delete",
-			Plane:      "admin",
-			UserID:     fmt.Sprintf("%v", operator),
-			ResourceID: fmt.Sprintf("role-%s", id),
-			Detail:     fmt.Sprintf("role_code=%s", role.RoleCode),
-			IP:         c.ClientIP(),
-		})
-		response.OK(c, gin.H{"message": "role deleted"})
-	})
+	adminRoles.DELETE("/:id", handlers.H.DeleteRole)
 
 	// ===== Organization Management (GET/POST/PUT/DELETE /admin/orgs) — JWT + whitelist A + XAM roles =====
-	adminOrgs := api.Group("/admin/orgs", middleware.JWTAuth(jwtVerifier, nil, log), func(c *gin.Context) {
-		username, _ := c.Get("username")
-		rolesRaw, _ := c.Get("roles")
-		var roles []string
-		if rolesRaw != nil {
-			// JWT middleware sets roles as []string
-			if rolesSlice, ok := rolesRaw.([]string); ok {
-				roles = rolesSlice
-			} else if rolesStr, ok := rolesRaw.(string); ok && rolesStr != "" {
-				// Fallback: comma-separated string
-				roles = strings.Split(rolesStr, ",")
-			}
-		}
-		if !authz.CanAccessOrgManagement(database, fmt.Sprintf("%v", username), roles) {
-			response.Forbidden(c, "access denied")
-			c.Abort()
-			return
-		}
-		c.Next()
-	}, middleware.DomainFilter())
+	adminOrgs := api.Group("/admin/orgs", middleware.JWTAuth(jwtVerifier, nil, log), handlers.H.OrgsAuthz(), middleware.DomainFilter())
 	{
 		// List organizations (with tree structure)
-		adminOrgs.GET("", func(c *gin.Context) {
-			var orgs []model.Organization
-			query := database.Preload("Parent").Preload("Children")
-
-			// Apply domain filter if present
-			if filterDomain, ok := middleware.GetFilterDomain(c); ok && filterDomain != "" {
-				query = query.Where("domain = ?", filterDomain)
-			}
-
-			if err := query.Find(&orgs).Error; err != nil {
-				response.InternalError(c, "load orgs failed: "+err.Error())
-				return
-			}
-			// Build tree structure (only top-level orgs with children)
-			orgMap := make(map[uint]*model.Organization)
-			var topOrgs []model.Organization
-			for i := range orgs {
-				orgMap[orgs[i].ID] = &orgs[i]
-			}
-			for i := range orgs {
-				if orgs[i].ParentID == nil {
-					topOrgs = append(topOrgs, orgs[i])
-				}
-			}
-			response.OK(c, gin.H{"items": topOrgs, "total": len(topOrgs)})
-		})
+		adminOrgs.GET("", handlers.H.ListOrgs)
 
 		// Get organization detail
-		adminOrgs.GET("/:id", func(c *gin.Context) {
-			id, _ := parseUint(c.Param("id"))
-			var org model.Organization
-			query := database.Preload("Parent").Preload("Children").Preload("Members")
-
-			// Apply domain filter if present
-			if filterDomain, ok := middleware.GetFilterDomain(c); ok && filterDomain != "" {
-				query = query.Where("domain = ?", filterDomain)
-			}
-
-			if err := query.First(&org, id).Error; err != nil {
-				response.NotFound(c, "org not found")
-				return
-			}
-			response.OK(c, org)
-		})
+		adminOrgs.GET("/:id", handlers.H.GetOrg)
 
 		// Create organization
-		adminOrgs.POST("", func(c *gin.Context) {
-			var req struct {
-				Code        string `json:"code" binding:"required"`
-				Name        string `json:"name" binding:"required"`
-				Description string `json:"description"`
-				ParentID    *uint  `json:"parent_id"`
-				Domain      string `json:"domain"`
-			}
-			if err := c.ShouldBindJSON(&req); err != nil {
-				response.BadRequest(c, "invalid request: "+err.Error())
-				return
-			}
-			org := model.Organization{
-				Code:        req.Code,
-				Name:        req.Name,
-				Description: req.Description,
-				ParentID:    req.ParentID,
-				Domain:      req.Domain,
-				Status:      "active",
-			}
-			if err := database.Create(&org).Error; err != nil {
-				response.InternalError(c, "create org failed: "+err.Error())
-				return
-			}
-			operator, _ := c.Get("user_id")
-			domain, _ := c.Get("domain")
-			database.Create(&oasmodel.AuditLog{
-				Plane:       "admin",
-				Action:      "org.create",
-				UserID:      fmt.Sprintf("%v", operator),
-				ResourceID:  fmt.Sprintf("org-%d", org.ID),
-				Detail:      fmt.Sprintf("code=%s, name=%s, domain=%s", org.Code, org.Name, org.Domain),
-				IP:          c.ClientIP(),
-				Environment: oasEnv.String(),
-				Domain:      fmt.Sprintf("%v", domain),
-			})
-			response.Created(c, org)
-		})
+		adminOrgs.POST("", handlers.H.CreateOrg)
 
 		// Update organization
-		adminOrgs.PUT("/:id", func(c *gin.Context) {
-			id, _ := parseUint(c.Param("id"))
-			var org model.Organization
-			if err := database.First(&org, id).Error; err != nil {
-				response.NotFound(c, "org not found")
-				return
-			}
-			var req struct {
-				Name        string `json:"name"`
-				Description string `json:"description"`
-				ParentID    *uint  `json:"parent_id"`
-				Domain      string `json:"domain"`
-				Status      string `json:"status"`
-			}
-			if err := c.ShouldBindJSON(&req); err != nil {
-				response.BadRequest(c, "invalid request: "+err.Error())
-				return
-			}
-			updates := map[string]interface{}{}
-			if req.Name != "" {
-				updates["name"] = req.Name
-			}
-			if req.Description != "" {
-				updates["description"] = req.Description
-			}
-			if req.ParentID != nil {
-				updates["parent_id"] = *req.ParentID
-			}
-			if req.Domain != "" {
-				updates["domain"] = req.Domain
-			}
-			if req.Status != "" {
-				updates["status"] = req.Status
-			}
-			if err := database.Model(&org).Updates(updates).Error; err != nil {
-				response.InternalError(c, "update org failed: "+err.Error())
-				return
-			}
-			operator, _ := c.Get("user_id")
-			domain, _ := c.Get("domain")
-			database.Create(&oasmodel.AuditLog{
-				Plane:       "admin",
-				Action:      "org.update",
-				UserID:      fmt.Sprintf("%v", operator),
-				ResourceID:  fmt.Sprintf("org-%d", org.ID),
-				Detail:      fmt.Sprintf("updates=%v", updates),
-				IP:          c.ClientIP(),
-				Environment: oasEnv.String(),
-				Domain:      fmt.Sprintf("%v", domain),
-			})
-			response.OK(c, org)
-		})
+		adminOrgs.PUT("/:id", handlers.H.UpdateOrg)
 
 		// Delete organization
-		adminOrgs.DELETE("/:id", func(c *gin.Context) {
-			id, _ := parseUint(c.Param("id"))
-			var org model.Organization
-			if err := database.First(&org, id).Error; err != nil {
-				response.NotFound(c, "org not found")
-				return
-			}
-			// Check if has children
-			var childCount int64
-			database.Model(&model.Organization{}).Where("parent_id = ?", org.ID).Count(&childCount)
-			if childCount > 0 {
-				response.BadRequest(c, "cannot delete org with children")
-				return
-			}
-			// Check if has members
-			var memberCount int64
-			database.Model(&model.UserOrganization{}).Where("organization_id = ?", org.ID).Count(&memberCount)
-			if memberCount > 0 {
-				response.BadRequest(c, "cannot delete org with members")
-				return
-			}
-			if err := database.Delete(&org).Error; err != nil {
-				response.InternalError(c, "delete org failed: "+err.Error())
-				return
-			}
-			operator, _ := c.Get("user_id")
-			domain, _ := c.Get("domain")
-			database.Create(&oasmodel.AuditLog{
-				Plane:       "admin",
-				Action:      "org.delete",
-				UserID:      fmt.Sprintf("%v", operator),
-				ResourceID:  fmt.Sprintf("org-%d", org.ID),
-				Detail:      fmt.Sprintf("code=%s", org.Code),
-				IP:          c.ClientIP(),
-				Environment: oasEnv.String(),
-				Domain:      fmt.Sprintf("%v", domain),
-			})
-			response.OK(c, gin.H{"message": "org deleted"})
-		})
+		adminOrgs.DELETE("/:id", handlers.H.DeleteOrg)
 
 		// Get organization members
-		adminOrgs.GET("/:id/members", func(c *gin.Context) {
-			id, _ := parseUint(c.Param("id"))
-
-			// First check if org exists and belongs to user's domain
-			var org model.Organization
-			orgQuery := database
-			if filterDomain, ok := middleware.GetFilterDomain(c); ok && filterDomain != "" {
-				orgQuery = orgQuery.Where("domain = ?", filterDomain)
-			}
-			if err := orgQuery.First(&org, id).Error; err != nil {
-				response.NotFound(c, "org not found")
-				return
-			}
-
-			var members []model.UserOrganization
-			if err := database.Where("organization_id = ?", id).Find(&members).Error; err != nil {
-				response.InternalError(c, "load members failed: "+err.Error())
-				return
-			}
-			response.OK(c, gin.H{"items": members, "total": len(members)})
-		})
+		adminOrgs.GET("/:id/members", handlers.H.ListOrgMembers)
 
 		// Add member to organization
-		adminOrgs.POST("/:id/members", func(c *gin.Context) {
-			id, _ := parseUint(c.Param("id"))
-
-			// First check if org exists and belongs to user's domain
-			var org model.Organization
-			orgQuery := database
-			if filterDomain, ok := middleware.GetFilterDomain(c); ok && filterDomain != "" {
-				orgQuery = orgQuery.Where("domain = ?", filterDomain)
-			}
-			if err := orgQuery.First(&org, id).Error; err != nil {
-				response.NotFound(c, "org not found")
-				return
-			}
-
-			var req struct {
-				UserID uint   `json:"user_id" binding:"required"`
-				Role   string `json:"role"`
-			}
-			if err := c.ShouldBindJSON(&req); err != nil {
-				response.BadRequest(c, "invalid request: "+err.Error())
-				return
-			}
-			// Check if user exists
-			var user oasmodel.OASUser
-			if err := database.First(&user, req.UserID).Error; err != nil {
-				response.NotFound(c, "user not found")
-				return
-			}
-			// Check if already member
-			var existing model.UserOrganization
-			if err := database.Where("user_id = ? AND organization_id = ?", req.UserID, org.ID).First(&existing).Error; err == nil {
-				response.BadRequest(c, "user already member of this org")
-				return
-			}
-			member := model.UserOrganization{
-				UserID:         req.UserID,
-				OrganizationID: org.ID,
-				Role:           req.Role,
-			}
-			if err := database.Create(&member).Error; err != nil {
-				response.InternalError(c, "add member failed: "+err.Error())
-				return
-			}
-			operator, _ := c.Get("user_id")
-			domain, _ := c.Get("domain")
-			database.Create(&oasmodel.AuditLog{
-				Plane:       "admin",
-				Action:      "org.member.add",
-				UserID:      fmt.Sprintf("%v", operator),
-				ResourceID:  fmt.Sprintf("org-%d", org.ID),
-				Detail:      fmt.Sprintf("user_id=%d, role=%s", req.UserID, req.Role),
-				IP:          c.ClientIP(),
-				Environment: oasEnv.String(),
-				Domain:      fmt.Sprintf("%v", domain),
-			})
-			response.Created(c, member)
-		})
+		adminOrgs.POST("/:id/members", handlers.H.AddOrgMember)
 
 		// Remove member from organization
-		adminOrgs.DELETE("/:id/members/:userId", func(c *gin.Context) {
-			id, _ := parseUint(c.Param("id"))
-			userId, _ := parseUint(c.Param("userId"))
-
-			// First check if org exists and belongs to user's domain
-			var org model.Organization
-			orgQuery := database
-			if filterDomain, ok := middleware.GetFilterDomain(c); ok && filterDomain != "" {
-				orgQuery = orgQuery.Where("domain = ?", filterDomain)
-			}
-			if err := orgQuery.First(&org, id).Error; err != nil {
-				response.NotFound(c, "org not found")
-				return
-			}
-
-			var member model.UserOrganization
-			if err := database.Where("organization_id = ? AND user_id = ?", org.ID, userId).First(&member).Error; err != nil {
-				response.NotFound(c, "member not found")
-				return
-			}
-			if err := database.Delete(&member).Error; err != nil {
-				response.InternalError(c, "remove member failed: "+err.Error())
-				return
-			}
-			operator, _ := c.Get("user_id")
-			domain, _ := c.Get("domain")
-			database.Create(&oasmodel.AuditLog{
-				Plane:       "admin",
-				Action:      "org.member.remove",
-				UserID:      fmt.Sprintf("%v", operator),
-				ResourceID:  fmt.Sprintf("org-%d", org.ID),
-				Detail:      fmt.Sprintf("user_id=%d", userId),
-				IP:          c.ClientIP(),
-				Environment: oasEnv.String(),
-				Domain:      fmt.Sprintf("%v", domain),
-			})
-			response.OK(c, gin.H{"message": "member removed"})
-		})
+		adminOrgs.DELETE("/:id/members/:userId", handlers.H.RemoveOrgMember)
 	}
 
 	// ===== User Management Page (GET /admin/users) — JWT required =====
