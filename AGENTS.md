@@ -95,7 +95,7 @@ projects/
 - **A1 拆 God file**：cmd/oas/main.go 7145 → 149 行；model/authz/seed/handlers/routes 分包；handlers 19 个域文件 + AdminAuth/OrgsAuthz/UsersAuthz/AuditLogs* 组中间件
 - **A2 前端抽离**：14 个 PageHTML 函数 → internal/oas/handlers/frontend/*.html（go:embed）+ pages.go embedRender（`__P<n>__` 显式 strings.Replace，禁 %s/text/template）；页面路由闭包 → pages_routes.go 方法；验证：旧/新二进制串行启动快照对比，14 页面 HTML + 状态码字节级一致
 - **A3**：services/ams 归档至 /workspace/projects/archive/ams-20260908/（git mv 保留历史）
-- **A4**：dist/ 出库（git rm --cached + .gitignore /dist/），build.sh 源码编译分支验证通过
+- **A4 → 部署修正**：dist/ 出库后在部署平台证伪——runtime_pkg 沙箱无 Go 编译器，build.sh 源码编译分支 exit 1。修正（c51a519）：dist/{oas,ms,os} 用最新源码重建并重新入库（部署走 pre-compiled 分支 0.03s），build.sh 保留双路径（dist 优先 / 本地源码编译）；**今后每次代码变更部署前必须重建 dist 三件套并提交**（sha256 记录到交付说明）
 - **回滚锚点**：`oas-09-mid-verified` tag（锚定 A2 自测验证点 b378cdc）；更早锚点 f7d48aff59
 - **包依赖单向**：cmd/oas → internal/oas/routes → internal/oas/handlers → internal/oas/{model,authz} → pkg；RegeneratePolicyCSV 经 Handlers 函数字段注入（实现在 package oas）
 - **A0 基线不变量（拆分时保留、禁止顺手修正）**：GET /api/v1/admin/roles 对 SU 返回 403；/api/v1/admin/stats 404；页面级与 API 级鉴权不一致；console-home 302 → /admin/overview?token=<JWT>；approvalsPageHTML 内部硬编码用户名自算 isOUAU/canWrite；登录 API 字段 access_token
