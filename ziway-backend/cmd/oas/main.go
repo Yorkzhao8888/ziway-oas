@@ -2866,6 +2866,12 @@ func main() {
 		})
 	}
 	adminUsers.GET("/users", func(c *gin.Context) {
+		// 白名单 B：用户管理仅 SU/OU/AU 可访问
+		operatorUsername, _ := c.Get("username")
+		if !isInAdminWhitelistB(database, fmt.Sprintf("%v", operatorUsername)) {
+			response.Forbidden(c, "only SU/OU/AU admin can manage users")
+			return
+		}
 		type UserVO struct {
 			ID          uint64   `json:"id"`
 			UserCode    string   `json:"user_code"`
@@ -3065,19 +3071,17 @@ func main() {
 
 	// DELETE /api/v1/admin/users/:id — 删除用户（白名单 B：仅 SU/OU/AU）
 	adminUsers.DELETE("/users/:id", func(c *gin.Context) {
+		// 白名单 B：删除用户仅 SU/OU/AU 可操作
+		operatorUsername, _ := c.Get("username")
+		if !isInAdminWhitelistB(database, fmt.Sprintf("%v", operatorUsername)) {
+			response.Forbidden(c, "only SU/OU/AU admin can delete users")
+			return
+		}
 		id, _ := parseUint(c.Param("id"))
 		var targetUser OASUser
 		if database.First(&targetUser, id).Error != nil {
 			response.NotFound(c, "user not found")
 			return
-		}
-		// 白名单 B：删除 admin 账号仅 OU/AU admin 可操作
-		operatorUsername, _ := c.Get("username")
-		if isAdminAccount(targetUser.Username) {
-			if !isInAdminWhitelistB(database, fmt.Sprintf("%v", operatorUsername)) {
-				response.Forbidden(c, "only SU/OU/AU admin can delete admin accounts")
-				return
-			}
 		}
 		// 删除用户
 		if err := database.Delete(&targetUser).Error; err != nil {
@@ -3086,18 +3090,26 @@ func main() {
 		}
 		// 删除用户角色关联
 		database.Where("user_id = ?", id).Delete(&OASUserRole{})
-		// 审计日志
+		// 审计日志 - 记录操作者身份，resource_id 为被删用户 id
+		var operator OASUser
+		operatorUserCode := ""
+		operatorDisplayName := ""
+		if database.Where("username = ?", operatorUsername).First(&operator).Error == nil {
+			operatorUserCode = operator.UserCode
+			operatorDisplayName = operator.DisplayName
+		}
 		database.Create(&AuditLog{
 			Plane:       "admin",
 			Action:      "admin.account.delete",
-			UserID:      targetUser.UserCode,
-			UserName:    targetUser.DisplayName,
+			UserID:      operatorUserCode,
+			UserName:    operatorDisplayName,
 			Resource:    "user",
-			Detail:      fmt.Sprintf("env=%s, user_id=%d, username=%s", oasEnv.String(), id, targetUser.Username),
+			ResourceID:  fmt.Sprintf("%d", id),
+			Detail:      fmt.Sprintf("env=%s, deleted_user_id=%d, deleted_username=%s, deleted_role=%s", oasEnv.String(), id, targetUser.Username, targetUser.RoleCode),
 			IP:          c.ClientIP(),
 			UserAgent:   c.Request.UserAgent(),
 			Environment: oasEnv.String(),
-			Domain:      targetUser.Domain,
+			Domain:      operator.Domain,
 		})
 		response.OK(c, gin.H{"id": id, "username": targetUser.Username})
 	})
