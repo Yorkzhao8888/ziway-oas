@@ -3073,9 +3073,8 @@ func main() {
 		}
 		// 白名单 B：删除 admin 账号仅 OU/AU admin 可操作
 		operatorUsername, _ := c.Get("username")
-		operatorRoleCode, _ := c.Get("role_code")
 		if isAdminAccount(targetUser.Username) {
-			if !isInAdminWhitelistB(database, fmt.Sprintf("%v", operatorUsername), fmt.Sprintf("%v", operatorRoleCode)) {
+			if !isInAdminWhitelistB(database, fmt.Sprintf("%v", operatorUsername)) {
 				response.Forbidden(c, "only SU/OU/AU admin can delete admin accounts")
 				return
 			}
