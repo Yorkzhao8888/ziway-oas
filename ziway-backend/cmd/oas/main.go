@@ -189,54 +189,14 @@ func main() {
 	owner := api.Group("/owner")
 	{
 		// 事业场生命周期
-		owner.GET("/domains", func(c *gin.Context) {
-			var items []oasmodel.DomainRegistry
-			database.Order("created_at DESC").Find(&items)
-			response.OK(c, items)
-		})
-		owner.POST("/domains", func(c *gin.Context) {
-			var d oasmodel.DomainRegistry
-			if err := c.ShouldBindJSON(&d); err != nil {
-				response.BadRequest(c, "invalid request")
-				return
-			}
-			database.Create(&d)
-			response.Created(c, d)
-		})
-		owner.PUT("/domains/:id/status", func(c *gin.Context) {
-			var body struct {
-				Status string `json:"status"`
-			}
-			c.ShouldBindJSON(&body)
-			database.Model(&oasmodel.DomainRegistry{}).Where("id = ?", c.Param("id")).Update("status", body.Status)
-			response.OK(c, nil)
-		})
+		owner.GET("/domains", handlers.H.ListDomains)
+		owner.POST("/domains", handlers.H.CreateDomain)
+		owner.PUT("/domains/:id/status", handlers.H.UpdateDomainStatus)
 
 		// 治理策略
-		owner.GET("/policies", func(c *gin.Context) {
-			var items []oasmodel.GovernancePolicy
-			database.Order("created_at DESC").Find(&items)
-			response.OK(c, items)
-		})
-		owner.POST("/policies", func(c *gin.Context) {
-			var p oasmodel.GovernancePolicy
-			if err := c.ShouldBindJSON(&p); err != nil {
-				response.BadRequest(c, "invalid request")
-				return
-			}
-			database.Create(&p)
-			response.Created(c, p)
-		})
-		owner.PUT("/policies/:id", func(c *gin.Context) {
-			var p oasmodel.GovernancePolicy
-			if err := database.First(&p, c.Param("id")).Error; err != nil {
-				response.NotFound(c, "policy not found")
-				return
-			}
-			c.ShouldBindJSON(&p)
-			database.Save(&p)
-			response.OK(c, p)
-		})
+		owner.GET("/policies", handlers.H.ListPolicies)
+		owner.POST("/policies", handlers.H.CreatePolicy)
+		owner.PUT("/policies/:id", handlers.H.UpdatePolicy)
 	}
 
 	// ===== OAuth 2.0 / OIDC Endpoints (OAS-CONSOLE-06) =====
