@@ -19,27 +19,42 @@
 ## 目录结构
 
 ```
-ziway-backend/
-├── cmd/
-│   ├── oas/        # OAS 进程入口
-│   ├── ms/         # MBS 进程入口（12 模块）
-│   └── os/         # BOS 进程入口（12 编排器）
-├── internal/
-│   ├── mbs/        # MBS 模块实现（ams/cms/dms/hms/fms/tms/ems/gms/oms/vms/ims/sms）
-│   └── bos/        # BOS 编排器实现（cos/dos/ibos/vbos/tos/abos/ebos/hbos/sbos/fbos/gbos/obos）
-├── pkg/            # 共享库（config/db/server/jwt/kafka/middleware/logger/response/eventbus/idgen/model）
-├── services/ams/   # P1 AMS 独立服务（可单独部署）
-├── configs/        # 配置文件（config.yaml=prod, dev-sqlite.yaml=dev）
-├── scripts/        # 部署脚本（build.sh/run.sh）
-├── Makefile        # 构建与运行命令
-└── setup.sh        # 一键部署脚本
+projects/
+├── archive/ams-20260908/  # P1 AMS 独立服务归档（OAS-CONSOLE-09 A3 移出，不再构建）
+├── AGENTS.md
+└── ziway-backend/
+    ├── cmd/
+    │   ├── oas/        # OAS 进程入口（149 行，仅启动逻辑+seed，OAS-CONSOLE-09 拆分后）
+    │   ├── ms/         # MBS 进程入口（12 模块）
+    │   └── os/         # BOS 进程入口（12 编排器）
+    ├── internal/
+    │   ├── oas/        # OAS 实现（OAS-CONSOLE-09 A1/A2 拆分产物）
+    │   │   ├── model/          # 14 个 struct（oasmodel 包）
+    │   │   ├── authz.go        # 权限函数（白名单 A/B、XAM 域隔离）
+    │   │   ├── seed.go         # OAuth/RBAC/测试用户 seed（导出函数）
+    │   │   ├── state.go        # adminUsernames 归属记录
+    │   │   ├── routes.go       # Register(r)：全部 API + 页面路由收口
+    │   │   └── handlers/       # Handlers struct + var H + 按域方法文件 + pages.go + pages_routes.go
+    │   │       └── frontend/   # 14 个页面 HTML 模板（go:embed）
+    │   ├── mbs/        # MBS 模块实现（ams/cms/dms/hms/fms/tms/ems/gms/oms/vms/ims/sms）
+    │   └── bos/        # BOS 编排器实现（cos/dos/ibos/vbos/tos/abos/ebos/hbos/sbos/fbos/gbos/obos）
+    ├── pkg/            # 共享库（config/db/server/jwt/kafka/middleware/logger/response/eventbus/idgen/model）
+    ├── configs/        # 配置文件（config.yaml=prod, dev-sqlite.yaml=dev）
+    ├── scripts/        # 部署脚本（build.sh/run.sh）
+    ├── Makefile        # 构建与运行命令
+    └── setup.sh        # 一键部署脚本
 ```
+
+注意：`dist/` 已出库（OAS-CONSOLE-09 A4，git 不跟踪），build.sh 无 dist 时走源码编译。
 
 ## 关键入口 / 核心模块
 
 - `cmd/ms/main.go`：MBS 主入口，注册 12 个模块，AutoMigrate，启动 HTTP
-- `cmd/oas/main.go`：OAS 主入口，治理平面
-- `cmd/os/main.go`：BOS 主入口，反向代理到 MBS
+- `cmd/oas/main.go`：OAS 主入口（149 行：依赖初始化 → handlers.H 注入 → JWT init → AutoMigrate → oas.Register(r) → 3 个 seed → 启动）
+- `internal/oas/routes.go`：OAS 全部路由收口（API 段 + 页面段），`handlers.H` 方法值引用
+- `internal/oas/handlers/handlers.go`：Handlers struct（DB/Log/Cfg/OASEnv/JWTIssuer/JWTVerifier/JWTPublicKey/LoginLimiter/RegeneratePolicyCSV）+ 包级 `var H`
+- `internal/oas/handlers/pages.go`：页面 HTML 渲染层（go:embed frontend/*.html + embedRender 显式 `__P<n>__` strings.Replace 注入，输出与拆分前字节级一致）
+- `internal/oas/handlers/pages_routes.go`：14 个页面路由方法（PageLogin/PageConsoleHome/PageOverview/…）
 - `pkg/config/config.go`：配置加载，`APP_ENV` 决定模式（dev→SQLite, prod→PostgreSQL）
 - `pkg/server/server.go`：HTTP/gRPC 启动与优雅关闭
 - `pkg/db/db.go`：数据库初始化（GORM）
@@ -62,8 +77,9 @@ ziway-backend/
 
 - `go.mod` 声明 `go 1.22`，部署平台 runtime 使用 `golang-1.25`（向后兼容）
 - 配置文件通过 `ZIWAY_` 前缀的环境变量覆盖，`ZIWAY_SERVER_HTTP_PORT` 控制端口
-- SQLite 开发模式下数据存储在 `data/ziway_p0.db`，启动前需确保 `data/` 目录存在
-- `services/ams/` 是 P1 独立服务，有独立的 `go.mod`，需单独构建
+- SQLite 开发模式下数据存储在 `data/ziway_p0.db`（git 跟踪但本地自测会改它，提交前用 git restore 恢复）
+- `archive/ams-20260908/` 是 P1 AMS 独立服务归档（OAS-CONSOLE-09 A3），有独立 `go.mod`，不参与任何构建；Makefile 的 build-ams 目标已删除
+- dist/ 二进制已出库（A4）：git 不跟踪；`scripts/build.sh` 优先用本地 dist/，缺失时源码编译（部署平台 runtime golang-1.25 兼容）
 - `internal/` 目录名为 `mbs/` 和 `bos/`（非 `ms/` 和 `os/`），与 import 路径和 package 声明一致
 - BOS（cmd/os）启动强校验安全三件套：`configs/public_key.pem` + `configs/rbac_model.conf` + `configs/rbac_policy.csv`，任一缺失 → fail-closed 拒绝启动
 - JWT 中间件 Redis 黑名单检查为可选（rdb=nil 时跳过），不影响 JWT 验签本身
@@ -73,6 +89,17 @@ ziway-backend/
 - 开发环境启动需清除平台注入的 `ZIWAY_DATABASE_DRIVER` 和 `ZIWAY_DATABASE_DSN`，否则会使用 PostgreSQL 而非 SQLite
 - OAS-SEC-01 安全闭环：生产域（OAS_ENV=PROD）三便利端点（quick-login/dev-token/test-accounts）必须 404，登录页隐藏开发入口
 - 登录页 JS 按环境条件渲染：quickLogin/genDevToken 等函数仅在 BETA/DEV 模式的独立 `<script>` 块中定义，PROD 模式整段不渲染
+
+## OAS-CONSOLE-09 P0 止血重构（已完成，仅拆分零行为变化）
+
+- **A1 拆 God file**：cmd/oas/main.go 7145 → 149 行；model/authz/seed/handlers/routes 分包；handlers 19 个域文件 + AdminAuth/OrgsAuthz/UsersAuthz/AuditLogs* 组中间件
+- **A2 前端抽离**：14 个 PageHTML 函数 → internal/oas/handlers/frontend/*.html（go:embed）+ pages.go embedRender（`__P<n>__` 显式 strings.Replace，禁 %s/text/template）；页面路由闭包 → pages_routes.go 方法；验证：旧/新二进制串行启动快照对比，14 页面 HTML + 状态码字节级一致
+- **A3**：services/ams 归档至 /workspace/projects/archive/ams-20260908/（git mv 保留历史）
+- **A4**：dist/ 出库（git rm --cached + .gitignore /dist/），build.sh 源码编译分支验证通过
+- **回滚锚点**：`oas-09-mid-verified` tag（锚定 A2 自测验证点 b378cdc）；更早锚点 f7d48aff59
+- **包依赖单向**：cmd/oas → internal/oas/routes → internal/oas/handlers → internal/oas/{model,authz} → pkg；RegeneratePolicyCSV 经 Handlers 函数字段注入（实现在 package oas）
+- **A0 基线不变量（拆分时保留、禁止顺手修正）**：GET /api/v1/admin/roles 对 SU 返回 403；/api/v1/admin/stats 404；页面级与 API 级鉴权不一致；console-home 302 → /admin/overview?token=<JWT>；approvalsPageHTML 内部硬编码用户名自算 isOUAU/canWrite；登录 API 字段 access_token
+- **OAS 测试账号**：oas-ou-admin/test123（SU），seed 于 BETA/DEV 模式
 
 ## OAS Console 治理平面功能
 
