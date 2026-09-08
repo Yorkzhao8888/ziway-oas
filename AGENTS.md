@@ -45,7 +45,7 @@ projects/
     └── setup.sh        # 一键部署脚本
 ```
 
-注意：`dist/` 已出库（OAS-CONSOLE-09 A4，git 不跟踪），build.sh 无 dist 时走源码编译。
+注意：`dist/` 在库（A4 曾出库，部署平台证伪后已恢复 git 跟踪，见 OAS-CONSOLE-09 章节修正记录）。
 
 ## 关键入口 / 核心模块
 
@@ -79,7 +79,7 @@ projects/
 - 配置文件通过 `ZIWAY_` 前缀的环境变量覆盖，`ZIWAY_SERVER_HTTP_PORT` 控制端口
 - SQLite 开发模式下数据存储在 `data/ziway_p0.db`（git 跟踪但本地自测会改它，提交前用 git restore 恢复）
 - `archive/ams-20260908/` 是 P1 AMS 独立服务归档（OAS-CONSOLE-09 A3），有独立 `go.mod`，不参与任何构建；Makefile 的 build-ams 目标已删除
-- dist/ 二进制已出库（A4）：git 不跟踪；`scripts/build.sh` 优先用本地 dist/，缺失时源码编译（部署平台 runtime golang-1.25 兼容）
+- dist/ 三件套（oas/ms/os）在库且被 git 跟踪（A4 出库修正后的终态）；`scripts/build.sh` 优先用 dist/（部署路径，无需 Go），缺失且本地有 Go 时源码编译；**部署沙箱没有 Go 编译器**——任何依赖 go 命令的构建步骤在部署环境都会 exit 1
 - `internal/` 目录名为 `mbs/` 和 `bos/`（非 `ms/` 和 `os/`），与 import 路径和 package 声明一致
 - BOS（cmd/os）启动强校验安全三件套：`configs/public_key.pem` + `configs/rbac_model.conf` + `configs/rbac_policy.csv`，任一缺失 → fail-closed 拒绝启动
 - JWT 中间件 Redis 黑名单检查为可选（rdb=nil 时跳过），不影响 JWT 验签本身
@@ -99,7 +99,11 @@ projects/
 - **回滚锚点**：`oas-09-mid-verified` tag（锚定 A2 自测验证点 b378cdc）；更早锚点 f7d48aff59
 - **包依赖单向**：cmd/oas → internal/oas/routes → internal/oas/handlers → internal/oas/{model,authz} → pkg；RegeneratePolicyCSV 经 Handlers 函数字段注入（实现在 package oas）
 - **A0 基线不变量（拆分时保留、禁止顺手修正）**：GET /api/v1/admin/roles 对 SU 返回 403；/api/v1/admin/stats 404；页面级与 API 级鉴权不一致；console-home 302 → /admin/overview?token=<JWT>；approvalsPageHTML 内部硬编码用户名自算 isOUAU/canWrite；登录 API 字段 access_token
-- **OAS 测试账号**：oas-ou-admin/test123（SU），seed 于 BETA/DEV 模式
+- **OAS 测试账号**：oas-ou-admin/test123（SU）、oas-au-admin/test123（AU）、oas-oam-admin/test123（OAM）、oas-ou-owner/test123（OU）；disabled_user/**disabled123**（禁用态，登录返回 403——工单 v1.5 写 401 是用 test123 测出的密码错误假象，已更正）
+- **页面路由鉴权 = 硬编码用户名白名单** {oas-ou-admin, oas-au-admin, oas-oam-admin}（Page* 方法内 claims.Username 字面量比对，与 role_code 无关）；oas-ou-owner（OU）访问页面 403 是 A0 既有基线，不是漂移
+- **/login 明文字节合法组合**（`curl -s | wc -c`）：PROD/RC=3957、BETA+devToken关=5529、BETA+devToken开=8828。线上经平台域名实测 7033B 稳定且不属任何组合——疑为平台边缘网关注入内容（复测功能完整，非阻塞关单）；再排查时从响应 Content-Length 与网关层入手
+- **关单终态**：最终部署成功 e82e8d40（deployHistoryId 7683289852544319524），生产域 62j75kfyn3.coze.site；主 Agent 线上复测全项 PASS（含真 SU oas-ou-admin 六页面 200、OAS-SEC-01 生产 404、OIDC/JWKS 200）判 PASS 关单
+- **生产库 display_name**：主 Agent 已直接 UPDATE 对齐 seed.go L195-199（系统总管理者/系统运营管理者/治理审计员/生态董事长），与代码 seed 定义一致，新环境首建库无分叉风险
 
 ## OAS Console 治理平面功能
 
