@@ -152,7 +152,7 @@ projects/
 - **XAM 角色**：TAM/HAM/YAM/VAM（域隔离，本域数据）
 - **审计全覆盖**：所有操作入 audit_logs，含 Domain 字段
 
-## OAS-CONSOLE-10 UpdateConfig 安全加固（已完成，待部署验收）
+## OAS-CONSOLE-10 UpdateConfig 安全加固（已关单 PASS）
 
 - **修复对象**：`internal/oas/handlers/system_config.go` UpdateConfig（PUT /api/v1/admin/configs/:key）原为裸 ShouldBindJSON+Save，无鉴权/无审计/无敏感键保护/允许改任意字段
 - **三件套加固**：①白名单 B（authz.IsInAdminWhitelistB，与 admin-accounts/system-config 同口径）②审计落库 action=`governance.config.update`，Detail 只记 old/new 字节数不记 value 原文 ③敏感 key 黑名单（小写 contains secret/token/password/passwd/credential/private → 400）+ Encrypted=true 行拒写（400）
@@ -165,3 +165,5 @@ projects/
 - **教训**：`pkill` 前置于 `&&` 链中若被前置命令非零退出短路，新进程会因端口占用启动失败、旧二进制继续服务——重启后必须 `ps -eo pid,lstart,cmd` 确认进程是新起的
 - **构建产物**（2026-09-09 11:53:15 CST）：dist/oas sha256 b28de84b…、dist/ms 95411290…、dist/os c9889a9f…
 - **验收对账项**（主 Agent 部署后执行）：①生产库 `SELECT category, key, encrypted FROM system_configs` 与黑名单模式对账（若有 key 命中黑名单则确认其确应拒写）②PUT 正常 key=200+audit_logs 落行 ③PUT 含 secret 的 key=400 ④OAM token PUT=403 ⑤页面 /admin/system-config 编辑区可用
+
+- **关单终态**：部署 3606288（deployHistoryId 7683379526738608178）Succeeded @ 62j75kfyn3.coze.site；主 Agent 验收 10 项全 PASS（生产库对账无数据/PUT 200+审计落库/黑名单 400/OAM 403/匿名 401/前端编辑区/全角色一键登录回归/全局回归无漂移）；测试数据 test.feature 已清理。白名单 B 真实语义（SU/OU/AU）已线上验证
