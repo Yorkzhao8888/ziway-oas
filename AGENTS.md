@@ -191,3 +191,12 @@ projects/
 - **本地验证**（BETA/8081）：A4/A5/A6 SU 200+owner 403+原口径回归 200；B1 SU 200 渲染正常、B2 302 链正确、导航死链修复确认；D 全矩阵 200/404/400/403+审计落行（governance.config.delete）；PUT 回归 200。gofmt/vet/build/test 全绿
 - **构建产物**（2026-09-09 14:31:37 CST）：dist/oas sha256 75e1ac57…、dist/ms 45d74fa7…、dist/os 0ee341ff…
 - **验收对账项**（主 Agent 部署后）：①三别名 200+原路径回归 ②/admin/services SU 200、匿名 302 login ③/config-center 302→/admin/system-config ④DELETE 正常 key 200+审计、secret key 400、不存在 404、CU 403
+
+## X1 补修（P1，13 号单同期完成）
+
+- **漏点**：POST /api/v1/admin/users（users.go CreateUser）用 password.Hash 包装绕过了 12 号 SEC-3 的 bcrypt grep 排查，password="1" 可 201。已补 pkg/password.ValidateStrength（同口径 ≥8 位 + 四类三类）
+- **全量排查结论**（密码哈希包装函数 password.Hash 导致初查遗漏，本次按 Hash/req.Password 双向 grep）：用户密码入口共 4 处全部接入 ValidateStrength——users.go CreateUser（本次补）、admin_accounts.go 创建+重置（12 号已接）、ams.go 创建（12 号已接）；无用户密码重置第二端点；oauth_clients 的 client_secret 为机器随机凭证不属用户密码策略；seed.go 静态测试账号（test123）为工单链路依赖不接入
+- **F3/F4/F5**：console_home TAM/HAM/YAM 三卡片移除（XAM 域管理页 404 死链，TI 默认不交付；恢复需 CONSOLE-08 裁决后补页+菜单）。F1 services 页/F2 configs 死链已在 13 号单交付
+- **验证**：users 弱密码 1/123/abcdefgh 全 400、Str0ngPass! 201、admin-accounts 回归 400；菜单 grep 0 残留
+- **构建产物**（2026-09-09 20:08:31 CST）：dist/oas e9d7dd8d…、dist/ms 8c499d8a…、dist/os 5c2e2da9…
+- **验收对账项**：POST /api/v1/admin/users password="1"=400（X1 闭合）、console_home 无 domains/TAM|HAM|YAM 链接

@@ -163,6 +163,11 @@ func (h *Handlers) CreateUser(c *gin.Context) {
 		response.BadRequest(c, "role_code not found: "+req.RoleCode)
 		return
 	}
+	// OAS-CONSOLE-X1: 密码强度校验（≥8 位 + 四类字符至少三类），与 admin-accounts/ams 同口径
+	if err := password.ValidateStrength(req.Password); err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
 	hash, err := password.Hash(req.Password)
 	if err != nil {
 		response.InternalError(c, "failed to hash password")
