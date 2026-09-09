@@ -38,6 +38,9 @@ var systemConfigTmpl string
 //go:embed frontend/api_keys.html
 var apiKeysTmpl string
 
+//go:embed frontend/services.html
+var servicesTmpl string
+
 //go:embed frontend/federation_nodes.html
 var federationNodesTmpl string
 
@@ -207,6 +210,12 @@ func ownershipPageHTML(username string) string {
 func adminAccountsPageHTML(username string) string {
 
 	return adminAccountsTmpl
+}
+
+// servicesPageHTML — OAS-CONSOLE-13 B1：服务注册列表页（模板内无占位符）
+func servicesPageHTML(username string) string {
+
+	return servicesTmpl
 }
 
 func systemConfigPageHTML(username string) string {

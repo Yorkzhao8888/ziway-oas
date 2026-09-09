@@ -111,6 +111,8 @@ func Register(r *gin.Engine) {
 	{
 		// ===== 治理看板 (/admin/dashboard/*) =====
 		admin.GET("/dashboard/stats", handlers.H.DashboardStats)
+		// OAS-CONSOLE-13 A4: 治理概览别名（测试口径 /dashboard/overview，同 handler）
+		admin.GET("/dashboard/overview", handlers.H.DashboardStats)
 
 		// ===== 战略审批工作台 (/admin/approvals) =====
 		admin.GET("/approvals", handlers.H.ListApprovals)
@@ -128,6 +130,8 @@ func Register(r *gin.Engine) {
 
 		// ===== 所有权视图 (/admin/ownership) =====
 		admin.GET("/ownership/matrix", handlers.H.OwnershipMatrix)
+		// OAS-CONSOLE-13 A5: 所有权 API 别名（页面 /admin/ownership 在根段，互不影响）
+		admin.GET("/ownership", handlers.H.OwnershipMatrix)
 
 		// ===== Admin 账号管理（2b-1）=====
 		// 列表（白名单 B: SU/OU/AU）
@@ -151,6 +155,8 @@ func Register(r *gin.Engine) {
 		// 系统配置
 		admin.GET("/configs", handlers.H.GetConfigs)
 		admin.PUT("/configs/:key", handlers.H.UpdateConfig)
+		// OAS-CONSOLE-13 D: 配置项删除（白名单 B + 敏感 key 拒删 + 审计）
+		admin.DELETE("/configs/:key", handlers.H.DeleteConfig)
 
 		// 服务注册
 		admin.GET("/services", handlers.H.ListServices)
@@ -261,6 +267,14 @@ func Register(r *gin.Engine) {
 	// GET /api/v1/admin/roles — list all roles
 	adminRoles.GET("", handlers.H.ListRoles)
 
+	// OAS-CONSOLE-13 A6: /admin/rbac/roles 别名（与 /admin/roles 同鉴权同 handler，测试口径兼容）
+	adminRBACRoles := api.Group("/admin/rbac/roles")
+	if handlers.H.JWTVerifier != nil {
+		adminRBACRoles.Use(middleware.JWTAuth(handlers.H.JWTVerifier, nil, handlers.H.Log))
+		adminRBACRoles.Use(middleware.RequireUsers("oas-ou-admin", "oas-au-admin", "oas-oam-admin"))
+	}
+	adminRBACRoles.GET("", handlers.H.ListRoles)
+
 	// POST /api/v1/admin/roles — create role
 	adminRoles.POST("", handlers.H.CreateRole)
 
@@ -300,6 +314,16 @@ func Register(r *gin.Engine) {
 	// ===== Login Page (GET /login) =====
 	r.GET("/login", handlers.H.PageLogin)
 
+	// OAS-CONSOLE-13 B2: /admin/config-center 已并入 /admin/system-config，旧链接 302 兼容
+	r.GET("/admin/config-center", func(c *gin.Context) {
+		q := c.Request.URL.RawQuery
+		if q != "" {
+			c.Redirect(302, "/admin/system-config?"+q)
+		} else {
+			c.Redirect(302, "/admin/system-config")
+		}
+	})
+
 	// ===== GET /admin — OAS Console 管理控制台首页 =====
 	// Requires JWT + whitelist A (OU/AU/OAM)
 	r.GET("/admin", handlers.H.PageConsoleHome)
@@ -325,6 +349,9 @@ func Register(r *gin.Engine) {
 
 	// 联邦节点管理页面（仅 OU/AU）
 	r.GET("/admin/federation-nodes", handlers.H.PageFederationNodes)
+
+	// ===== GET /admin/services — 服务注册列表页面（白名单 A）OAS-CONSOLE-13 B1 =====
+	r.GET("/admin/services", handlers.H.PageServices)
 
 	// ===== GET /admin/oauth-clients — OAuth 客户端管理页面（白名单 B：仅 OU/AU）=====
 	r.GET("/admin/oauth-clients", handlers.H.PageOAuthClients)

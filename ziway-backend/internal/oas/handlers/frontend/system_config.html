@@ -157,10 +157,38 @@ async function loadEditables() {
         }
       };
 
+      const delBtn = document.createElement('button');
+      delBtn.textContent = '删除';
+      delBtn.style.background = locked ? '#ccc' : '#c5221f';
+      delBtn.style.marginLeft = '6px';
+      delBtn.disabled = locked;
+      delBtn.onclick = async function() {
+        if (!window.confirm('确认删除配置项 ' + cfg.key + ' ？此操作会写入审计日志。')) return;
+        delBtn.disabled = true;
+        try {
+          const r = await fetch('/api/v1/admin/configs/' + encodeURIComponent(cfg.key), {
+            method: 'DELETE',
+            headers: { 'Authorization': 'Bearer ' + token }
+          });
+          const b = await r.json().catch(function() { return {}; });
+          if (r.ok) {
+            showMsg(true, '已删除: ' + cfg.key);
+            row.remove();
+          } else {
+            showMsg(false, '删除失败(' + r.status + '): ' + (b.message || b.error || '未知错误'));
+            delBtn.disabled = false;
+          }
+        } catch (e) {
+          showMsg(false, '删除失败: ' + e.message);
+          delBtn.disabled = false;
+        }
+      };
+
       row.appendChild(keyDiv);
       row.appendChild(catDiv);
       row.appendChild(input);
       row.appendChild(btn);
+      row.appendChild(delBtn);
       card.appendChild(row);
     });
   } catch (err) {

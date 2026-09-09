@@ -45,6 +45,16 @@ func (h *Handlers) ListServices(c *gin.Context) {
 // 生产库 system_configs key 清单以 SELECT category, key 对账为准）
 var sensitiveKeyBanned = []string{"secret", "token", "password", "passwd", "credential", "private"}
 
+func keyBanned(key string) bool {
+	lowerKey := strings.ToLower(key)
+	for _, banned := range sensitiveKeyBanned {
+		if strings.Contains(lowerKey, banned) {
+			return true
+		}
+	}
+	return false
+}
+
 func (h *Handlers) UpdateConfig(c *gin.Context) {
 	username, _ := c.Get("username")
 	usernameStr, _ := username.(string)
@@ -56,12 +66,9 @@ func (h *Handlers) UpdateConfig(c *gin.Context) {
 	}
 
 	key := c.Param("key")
-	lowerKey := strings.ToLower(key)
-	for _, banned := range sensitiveKeyBanned {
-		if strings.Contains(lowerKey, banned) {
-			response.BadRequest(c, "sensitive config key is not editable")
-			return
-		}
+	if keyBanned(key) {
+		response.BadRequest(c, "sensitive config key is not editable")
+		return
 	}
 
 	var body struct {
@@ -154,4 +161,37 @@ func (h *Handlers) GetSystemConfig(c *gin.Context) {
 	}
 
 	response.OK(c, config)
+}
+
+// DeleteConfig — OAS-CONSOLE-13 D：删除配置项（白名单 B + 敏感 key 拒删 + 审计），
+// 替代主 Agent 手工清生产库测试残留的模式
+func (h *Handlers) DeleteConfig(c *gin.Context) {
+	username, _ := c.Get("username")
+	usernameStr, _ := username.(string)
+	if !authz.IsInAdminWhitelistB(h.DB, usernameStr) {
+		response.Forbidden(c, "only SU/OU/AU admin can delete system config")
+		return
+	}
+	key := c.Param("key")
+	if keyBanned(key) {
+		response.BadRequest(c, "sensitive config key is not deletable")
+		return
+	}
+	var cfg oasmodel.SystemConfig
+	if err := h.DB.Where("key = ?", key).First(&cfg).Error; err != nil {
+		response.NotFound(c, "config not found")
+		return
+	}
+	h.DB.Delete(&cfg)
+	h.DB.Create(&oasmodel.AuditLog{
+		UserID:     usernameStr,
+		UserName:   usernameStr,
+		Plane:      "admin",
+		Action:     "governance.config.delete",
+		Resource:   "system_config",
+		ResourceID: key,
+		Detail:     fmt.Sprintf("deleted config (category=%s, value: %d bytes)", cfg.Category, len(cfg.Value)),
+		Domain:     "OAS",
+	})
+	response.OK(c, gin.H{"deleted": key})
 }

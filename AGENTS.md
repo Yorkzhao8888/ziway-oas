@@ -180,3 +180,14 @@ projects/
 - **部署注意**：四项修复一个 dist 全覆盖，一次部署全生效；owner plane 挂认证后 BOS/内部服务无调用方（已 grep 确认），无内部链路破坏风险；现有 API key（含空 scope）升级后读权限也会被拒（fail-closed），生产库 api_keys 有在用 key 的话需先补 scope 再部署
 - **验收对账项**（主 Agent 部署后执行）：①生产域 GET /api/v1/auth/test-accounts 匿名=404、带任意 JWT=404、quick-login 仍 200 ②空 scope API key GET/PUT admin 面=403 ③匿名 GET /api/v1/owner/domains=401、CU=403、SU=200 ④POST admin-accounts 弱密码=400 ⑤JWT header 与 JWKS kid 一致
 - **dev 库测试数据清理**：git restore --staged --worktree data/ziway_p0.db
+
+## OAS-CONSOLE-13 测试问题清单收敛（已完成，下版批次部署）
+
+- **A4/A5/A6 路由不一致**：均为测试口径与实际路由差异，统一加别名（同 handler 同鉴权，无放宽）：①GET /api/v1/admin/dashboard/overview → DashboardStats（治理概览，原 /dashboard/stats）②GET /api/v1/admin/ownership → OwnershipMatrix（原 /ownership/matrix；页面 /admin/ownership 在根段不冲突）③GET /api/v1/admin/rbac/roles 新组（JWTAuth+RequireUsers 三用户名，与 /admin/roles 同口径同 handler）
+- **B1 services 页面**：API /api/v1/admin/services 早已存在（200 空数组），页面缺失致导航死链。新增 frontend/services.html（只读表格：服务名/类型/版本/endpoint/健康检查/状态/注册/心跳，空态提示注册方式）+ pages.go servicesPageHTML + pages_routes.go PageServices（白名单 A=IsInAdminWhitelistA）+ routes.go 页面段
+- **B2 config-center**：302 重定向到 /admin/system-config（携带原 query，token 透传）；另自查发现 console_home 导航 /admin/configs 也是死链（页面从未存在），已改指 /admin/system-config
+- **D DELETE /api/v1/admin/configs/:key**（11 号单遗留）：白名单 B + 敏感 key 黑名单拒删（keyBanned 复用 PUT 的 sensitiveKeyBanned，PUT 内联循环已抽函数）+ 审计 action=governance.config.delete（记 category+value 字节数）+ 不存在 404 + Encrypted 行可删（黑名单 key 拒删工单口径）；前端 system_config.html 加删除按钮（黑名单/encrypted 禁用+confirm+错误提示）
+- **C 空返回语义（文档说明，非代码）**：/configs、/services、/federation-nodes 空数组均为正常空态（生产库无对应数据；federation-nodes 2b-3 有完整 CRUD，建数据即有）
+- **本地验证**（BETA/8081）：A4/A5/A6 SU 200+owner 403+原口径回归 200；B1 SU 200 渲染正常、B2 302 链正确、导航死链修复确认；D 全矩阵 200/404/400/403+审计落行（governance.config.delete）；PUT 回归 200。gofmt/vet/build/test 全绿
+- **构建产物**（2026-09-09 14:31:37 CST）：dist/oas sha256 75e1ac57…、dist/ms 45d74fa7…、dist/os 0ee341ff…
+- **验收对账项**（主 Agent 部署后）：①三别名 200+原路径回归 ②/admin/services SU 200、匿名 302 login ③/config-center 302→/admin/system-config ④DELETE 正常 key 200+审计、secret key 400、不存在 404、CU 403

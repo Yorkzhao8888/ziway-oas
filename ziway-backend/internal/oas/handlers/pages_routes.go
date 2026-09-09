@@ -323,6 +323,37 @@ func (h *Handlers) PageOwnership(c *gin.Context) {
 	c.String(200, ownershipPageHTML(claims.Username))
 }
 
+// PageServices — OAS-CONSOLE-13 B1：服务注册列表页（白名单 A）
+func (h *Handlers) PageServices(c *gin.Context) {
+	if h.JWTVerifier == nil {
+		response.InternalError(c, "JWT verifier not configured")
+		return
+	}
+	tokenStr := c.Query("token")
+	if tokenStr == "" {
+		auth := c.GetHeader("Authorization")
+		if len(auth) > 7 && auth[:7] == "Bearer " {
+			tokenStr = auth[7:]
+		}
+	}
+	if tokenStr == "" {
+		c.Redirect(302, "/login?redirect=/admin/services")
+		return
+	}
+	claims, err := h.JWTVerifier.Verify(tokenStr)
+	if err != nil {
+		c.Redirect(302, "/login?redirect=/admin/services")
+		return
+	}
+	if !authz.IsInAdminWhitelistA(h.DB, claims.Username) {
+		c.Header("Content-Type", "text/html; charset=utf-8")
+		c.String(403, "<h1>403 Forbidden</h1><p>Access restricted to whitelist A (OU/AU/OAM).</p>")
+		return
+	}
+	c.Header("Content-Type", "text/html; charset=utf-8")
+	c.String(200, servicesPageHTML(claims.Username))
+}
+
 func (h *Handlers) PageApprovals(c *gin.Context) {
 	if h.JWTVerifier == nil {
 		response.InternalError(c, "JWT verifier not configured")
