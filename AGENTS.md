@@ -181,7 +181,7 @@ projects/
 - **验收对账项**（主 Agent 部署后执行）：①生产域 GET /api/v1/auth/test-accounts 匿名=404、带任意 JWT=404、quick-login 仍 200 ②空 scope API key GET/PUT admin 面=403 ③匿名 GET /api/v1/owner/domains=401、CU=403、SU=200 ④POST admin-accounts 弱密码=400 ⑤JWT header 与 JWKS kid 一致
 - **dev 库测试数据清理**：git restore --staged --worktree data/ziway_p0.db
 
-## OAS-CONSOLE-13 测试问题清单收敛（已完成，下版批次部署）
+## OAS-CONSOLE-13 测试问题清单收敛（已关单 PASS）
 
 - **A4/A5/A6 路由不一致**：均为测试口径与实际路由差异，统一加别名（同 handler 同鉴权，无放宽）：①GET /api/v1/admin/dashboard/overview → DashboardStats（治理概览，原 /dashboard/stats）②GET /api/v1/admin/ownership → OwnershipMatrix（原 /ownership/matrix；页面 /admin/ownership 在根段不冲突）③GET /api/v1/admin/rbac/roles 新组（JWTAuth+RequireUsers 三用户名，与 /admin/roles 同口径同 handler）
 - **B1 services 页面**：API /api/v1/admin/services 早已存在（200 空数组），页面缺失致导航死链。新增 frontend/services.html（只读表格：服务名/类型/版本/endpoint/健康检查/状态/注册/心跳，空态提示注册方式）+ pages.go servicesPageHTML + pages_routes.go PageServices（白名单 A=IsInAdminWhitelistA）+ routes.go 页面段
@@ -192,7 +192,7 @@ projects/
 - **构建产物**（2026-09-09 14:31:37 CST）：dist/oas sha256 75e1ac57…、dist/ms 45d74fa7…、dist/os 0ee341ff…
 - **验收对账项**（主 Agent 部署后）：①三别名 200+原路径回归 ②/admin/services SU 200、匿名 302 login ③/config-center 302→/admin/system-config ④DELETE 正常 key 200+审计、secret key 400、不存在 404、CU 403
 
-## X1 补修（P1，13 号单同期完成）
+## X1 补修（P1，已关单 PASS）
 
 - **漏点**：POST /api/v1/admin/users（users.go CreateUser）用 password.Hash 包装绕过了 12 号 SEC-3 的 bcrypt grep 排查，password="1" 可 201。已补 pkg/password.ValidateStrength（同口径 ≥8 位 + 四类三类）
 - **全量排查结论**（密码哈希包装函数 password.Hash 导致初查遗漏，本次按 Hash/req.Password 双向 grep）：用户密码入口共 4 处全部接入 ValidateStrength——users.go CreateUser（本次补）、admin_accounts.go 创建+重置（12 号已接）、ams.go 创建（12 号已接）；无用户密码重置第二端点；oauth_clients 的 client_secret 为机器随机凭证不属用户密码策略；seed.go 静态测试账号（test123）为工单链路依赖不接入
@@ -200,3 +200,5 @@ projects/
 - **验证**：users 弱密码 1/123/abcdefgh 全 400、Str0ngPass! 201、admin-accounts 回归 400；菜单 grep 0 残留
 - **构建产物**（2026-09-09 20:08:31 CST）：dist/oas e9d7dd8d…、dist/ms 8c499d8a…、dist/os 5c2e2da9…
 - **验收对账项**：POST /api/v1/admin/users password="1"=400（X1 闭合）、console_home 无 domains/TAM|HAM|YAM 链接
+
+- **关单终态**：部署 HEAD 9d8afd4d（=13 号 35baf6f + X1 5fae4d6）线上 PROD 全量验收 PASS——X1 users 弱密码 400/强密码 201、三别名 200（RequireUsers 口径一致）、services 页/config-center 302/域菜单移除、DELETE 全矩阵 200/404/400/403（敏感 key 拒删先于存在性检查）、dashboard/stats CU 403 不变量保持；验收临时数据已清库（configs 空、active 用户 11 基线）。发布说明素材：路由别名三件 + services 页 + config-center 重定向 + DELETE 端点 + users 密码强度补齐 + 域菜单移除
