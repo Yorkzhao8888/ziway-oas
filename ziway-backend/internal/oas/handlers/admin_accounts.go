@@ -10,6 +10,7 @@ import (
 
 	"ziway/backend/internal/oas/authz"
 	oasmodel "ziway/backend/internal/oas/model"
+	"ziway/backend/pkg/password"
 	"ziway/backend/pkg/response"
 )
 
@@ -44,6 +45,11 @@ func (h *Handlers) ResetAdminPassword(c *gin.Context) {
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.BadRequest(c, "invalid request: "+err.Error())
+		return
+	}
+
+	if err := password.ValidateStrength(req.NewPassword); err != nil {
+		response.BadRequest(c, err.Error())
 		return
 	}
 
@@ -202,6 +208,11 @@ func (h *Handlers) CreateAdminAccount(c *gin.Context) {
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.BadRequest(c, "invalid request: "+err.Error())
+		return
+	}
+
+	if err := password.ValidateStrength(req.Password); err != nil {
+		response.BadRequest(c, err.Error())
 		return
 	}
 

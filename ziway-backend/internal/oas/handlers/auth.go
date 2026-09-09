@@ -329,7 +329,7 @@ func (h *Handlers) OAuthJWKS(c *gin.Context) {
 		"kty": "RSA",
 		"use": "sig",
 		"alg": "RS256",
-		"kid": "oas-rs256-key",
+		"kid": jwt.KeyID,
 		"n":   base64.RawURLEncoding.EncodeToString(h.JWTPublicKey.N.Bytes()),
 		"e":   base64.RawURLEncoding.EncodeToString(big.NewInt(int64(h.JWTPublicKey.E)).Bytes()),
 	}
@@ -558,14 +558,13 @@ func (h *Handlers) TestAccounts(c *gin.Context) {
 		Username    string `json:"username"`
 		DisplayName string `json:"display_name"`
 		Role        string `json:"role"`
-		Password    string `json:"password"`
 	}
 	accounts := []TestAccount{
-		{Username: "admin", DisplayName: "系统管理员", Role: "SU", Password: "test123"},
-		{Username: "operator", DisplayName: "运营人员", Role: "AU", Password: "test123"},
-		{Username: "customer", DisplayName: "客户用户", Role: "CU", Password: "test123"},
-		{Username: "viewer", DisplayName: "访客", Role: "GU", Password: "test123"},
-		{Username: "em", DisplayName: "供给运营长", Role: "EM", Password: "test123"},
+		{Username: "admin", DisplayName: "系统管理员", Role: "SU"},
+		{Username: "operator", DisplayName: "运营人员", Role: "AU"},
+		{Username: "customer", DisplayName: "客户用户", Role: "CU"},
+		{Username: "viewer", DisplayName: "访客", Role: "GU"},
+		{Username: "em", DisplayName: "供给运营长", Role: "EM"},
 	}
 	response.OK(c, gin.H{
 		"edition":  "beta",
@@ -789,7 +788,7 @@ func (h *Handlers) WellKnownJWKS(c *gin.Context) {
 		"kty": "RSA",
 		"use": "sig",
 		"alg": "RS256",
-		"kid": "oas-rsa-001",
+		"kid": jwt.KeyID,
 		"n":   base64.RawURLEncoding.EncodeToString(nBytes),
 		"e":   base64.RawURLEncoding.EncodeToString(eBytes),
 	}

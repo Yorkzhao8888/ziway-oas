@@ -37,9 +37,9 @@ func IsQuickLoginEnabled(env Environment) bool {
 }
 
 // IsTestAccountsEnabled returns true if test-accounts endpoint should be available
-// Only DEV and BETA environments allow test-accounts
+// SEC-2: only DEV; BETA/RC/PROD fail-closed (endpoint must not leak credentials over public network)
 func IsTestAccountsEnabled(env Environment) bool {
-	return env == DEV || env == BETA
+	return env == DEV
 }
 
 // IsDevTokenEnabled returns true if dev-token should be available

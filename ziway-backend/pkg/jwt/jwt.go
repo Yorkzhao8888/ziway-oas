@@ -9,6 +9,9 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 )
 
+// KeyID matches the JWK "kid" published by both JWKS endpoints (SEC-5).
+const KeyID = "oas-rsa-001"
+
 // Claims JWT载荷
 type Claims struct {
 	UserID       string   `json:"user_id"`
@@ -59,6 +62,7 @@ func (i *Issuer) IssueAccessToken(c *Claims) (string, int64, error) {
 		ID:        c.TokenID,
 	}
 	token := jwt.NewWithClaims(jwt.SigningMethodRS256, c)
+	token.Header["kid"] = KeyID
 	signed, err := token.SignedString(i.privateKey)
 	return signed, int64(i.accessTokenTTL.Seconds()), err
 }
@@ -74,6 +78,7 @@ func (i *Issuer) IssueAccessTokenWithTTL(c *Claims, ttl time.Duration) (string, 
 		ID:        c.TokenID,
 	}
 	token := jwt.NewWithClaims(jwt.SigningMethodRS256, c)
+	token.Header["kid"] = KeyID
 	signed, err := token.SignedString(i.privateKey)
 	return signed, int64(ttl.Seconds()), err
 }

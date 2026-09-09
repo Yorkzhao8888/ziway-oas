@@ -32,16 +32,19 @@ func Register(r *gin.Engine) {
 	// POST /api/v1/os/:os/proxy/ams/auth/login — unified login, returns real JWT
 	api.POST("/os/:os/proxy/ams/auth/login", handlers.H.ProxyAMSLogin)
 
-	// ===== Quick Login & Test Accounts (DEV/BETA only) =====
+	// ===== Quick Login (DEV/BETA only) =====
 	// OAS_ENV controls availability: DEV and BETA allow, RC and PROD return 404 (fail-closed)
 	if envpolicy.IsQuickLoginEnabled(handlers.H.OASEnv) {
 		// POST /api/v1/auth/quick-login — one-click login for testing
 		// Request: {"role": "SU"} or {"username": "admin"}
 		// Returns JWT without password verification
 		api.POST("/auth/quick-login", handlers.H.QuickLogin)
+	}
 
-		// GET /api/v1/auth/test-accounts — list available test accounts (beta only)
-		api.GET("/auth/test-accounts", handlers.H.TestAccounts)
+	// ===== GET /api/v1/auth/test-accounts (SEC-2: DEV only, JWT required) =====
+	// BETA/RC/PROD fail-closed 404; response never includes passwords
+	if envpolicy.IsTestAccountsEnabled(handlers.H.OASEnv) {
+		api.GET("/auth/test-accounts", middleware.JWTAuth(handlers.H.JWTVerifier, nil, handlers.H.Log), handlers.H.TestAccounts)
 	}
 
 	// ===== POST /api/v1/auth/dev-token — temporary token for development =====
@@ -60,7 +63,12 @@ func Register(r *gin.Engine) {
 	}
 
 	// ===== Owner Plane (/owner/*) — OU 权限 =====
+	// OAS-CONSOLE-12 SEC-1 扩大面：owner plane 曾完全无鉴权（匿名可 CRUD 治理策略/域注册）
 	owner := api.Group("/owner")
+	if handlers.H.JWTVerifier != nil {
+		owner.Use(middleware.JWTAuth(handlers.H.JWTVerifier, nil, handlers.H.Log))
+		owner.Use(handlers.H.OwnerGate())
+	}
 	{
 		// 事业场生命周期
 		owner.GET("/domains", handlers.H.ListDomains)
@@ -98,6 +106,8 @@ func Register(r *gin.Engine) {
 	admin.Use(handlers.H.AdminAuth())
 	// Allow API keys or admin role users
 	admin.Use(handlers.H.AdminRoleGate())
+	// SEC-1: API keys must present sufficient scope (default least-privilege, writes denied)
+	admin.Use(handlers.H.APIKeyScopeGate())
 	{
 		// ===== 治理看板 (/admin/dashboard/*) =====
 		admin.GET("/dashboard/stats", handlers.H.DashboardStats)
@@ -198,7 +208,7 @@ func Register(r *gin.Engine) {
 		admin.DELETE("/oauth-clients/:id", handlers.H.DeleteOAuthClient)
 
 		// 审计日志路由组 — 白名单 A + XAM 角色放行，handler 内再做细粒度检查
-		adminAuditLogs := api.Group("/admin/audit-logs", handlers.H.AuditLogsAuth(), handlers.H.AuditLogsGate())
+		adminAuditLogs := api.Group("/admin/audit-logs", handlers.H.AuditLogsAuth(), handlers.H.AuditLogsGate(), handlers.H.APIKeyScopeGate())
 
 		// 审计日志 — 白名单 B (OU/AU) 全量，OAM 不可读
 		// OAS-CONSOLE-08: 移除 XAM 域过滤，仅白名单 B 可访问

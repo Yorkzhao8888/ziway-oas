@@ -167,3 +167,16 @@ projects/
 - **验收对账项**（主 Agent 部署后执行）：①生产库 `SELECT category, key, encrypted FROM system_configs` 与黑名单模式对账（若有 key 命中黑名单则确认其确应拒写）②PUT 正常 key=200+audit_logs 落行 ③PUT 含 secret 的 key=400 ④OAM token PUT=403 ⑤页面 /admin/system-config 编辑区可用
 
 - **关单终态**：部署 3606288（deployHistoryId 7683379526738608178）Succeeded @ 62j75kfyn3.coze.site；主 Agent 验收 10 项全 PASS（生产库对账无数据/PUT 200+审计落库/黑名单 400/OAM 403/匿名 401/前端编辑区/全角色一键登录回归/全局回归无漂移）；测试数据 test.feature 已清理。白名单 B 真实语义（SU/OU/AU）已线上验证
+
+## OAS-CONSOLE-12 P0 安全修复（已完成，待部署）
+
+- **SEC-2 test-accounts 血止**：GET /api/v1/auth/test-accounts 原匿名 200 返回 5 账号明文密码（BETA 公网裸奔）。修复三件：①注册条件 IsQuickLoginEnabled(DEV/BETA) → envpolicy.IsDevEnv（仅 DEV 注册）②挂 middleware.JWTAuth ③handler 删 Password 字段（DEV 下也不再返回密码）。quick-login 主路径不动（DEV/BETA 仍可用）
+- **SEC-1 API Key scope gate**：admin 组 + audit-logs 组挂 handlers.H.APIKeyScopeGate()——JWT 用户直通；API key 读方法（GET/HEAD）需 scope read/admin、写方法（POST/PUT/PATCH/DELETE）需 write/admin，其余 403+Abort（空 scope fail-closed 全拒）。audit-logs 原挂独立组绕过 admin gate（AuditLogsGate L78 对 api_key 直接放行），已补挂
+- **SEC-1 扩大面 owner plane 裸奔**（独立测试未报出，自查发现）：/api/v1/owner/* 六端点（domains/policies CRUD）原无任何鉴权中间件，匿名可改治理策略与域注册。修复：owner 组挂 JWTAuth + handlers.H.OwnerGate()（白名单 A=SU/OU/AU/OAM）；API key 走 owner 组会被 JWTAuth 401（Bearer api-key 非 JWT），天然关闭
+- **SEC-3 密码强度**：pkg/password/strength.go ValidateStrength（≥8 位 + 四类字符至少三类：lower/upper/digit/symbol）；接入三处：admin_accounts.go 创建+重置密码、internal/mbs/ams/ams.go 创建用户
+- **SEC-5 kid 对齐（P3）**：JWT header 原无 kid。pkg/jwt 加常量 KeyID="oas-rsa-001"，两处 Issue token.Header["kid"]=KeyID；auth.go 两个 JWKS 端点（/oauth/jwks 原为 oas-rs256-key、/.well-known/jwks.json 原为 oas-rsa-001）统一为 jwt.KeyID——原两处 kid 不一致本身也是缺陷
+- **本地验证**（BETA/SQLite/8081）：SEC-2 BETA 匿名/带 JWT 全 404+quick-login SU 200；SEC-1 scope 矩阵（none 全 403/read 读通写 403/write 写通读 403/read write 全通）+owner 面（匿名 401/CU 403/SU 200+201）；SEC-3 弱密码 1/123/abcdefgh 全 400、Str0ngPass! 201；SEC-5 JWT header kid 对齐 + 两 JWKS 端点 kid 一致；全局回归 health/quick-login 7 角色/configs 读写/stats 404 全过。gofmt/vet/build 全绿（ams.go gofmt 差异为既有 struct tag 对齐，非本次引入）
+- **构建产物**（2026-09-09 13:55:42 CST）：dist/oas sha256 70197a35…、dist/ms eea97e12…、dist/os 6b7fadc7…
+- **部署注意**：四项修复一个 dist 全覆盖，一次部署全生效；owner plane 挂认证后 BOS/内部服务无调用方（已 grep 确认），无内部链路破坏风险；现有 API key（含空 scope）升级后读权限也会被拒（fail-closed），生产库 api_keys 有在用 key 的话需先补 scope 再部署
+- **验收对账项**（主 Agent 部署后执行）：①生产域 GET /api/v1/auth/test-accounts 匿名=404、带任意 JWT=404、quick-login 仍 200 ②空 scope API key GET/PUT admin 面=403 ③匿名 GET /api/v1/owner/domains=401、CU=403、SU=200 ④POST admin-accounts 弱密码=400 ⑤JWT header 与 JWKS kid 一致
+- **dev 库测试数据清理**：git restore --staged --worktree data/ziway_p0.db

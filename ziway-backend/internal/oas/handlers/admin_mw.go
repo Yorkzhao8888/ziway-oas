@@ -8,6 +8,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"golang.org/x/crypto/bcrypt"
 
+	"ziway/backend/internal/oas/authz"
 	oasmodel "ziway/backend/internal/oas/model"
 	"ziway/backend/pkg/middleware"
 	"ziway/backend/pkg/response"
@@ -100,5 +101,57 @@ func (h *Handlers) AdminAuth() gin.HandlerFunc {
 
 		// Otherwise, try JWT
 		middleware.JWTAuth(h.JWTVerifier, nil, h.Log)(c)
+	}
+}
+
+// APIKeyScopeGate enforces least-privilege for API-key requests (SEC-1):
+// read methods require scope read/admin, write methods require write/admin;
+// empty or unknown scopes are denied (fail-closed). JWT users pass through
+// and are governed by their own RBAC layer.
+func (h *Handlers) APIKeyScopeGate() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		authType, _ := c.Get("auth_type")
+		if authType != "api_key" {
+			c.Next()
+			return
+		}
+
+		scopes, _ := c.Get("api_key_scopes")
+		scopeStr, _ := scopes.(string)
+		granted := map[string]bool{}
+		for _, s := range strings.FieldsFunc(scopeStr, func(r rune) bool {
+			return r == ',' || r == ';' || r == ' ' || r == '\t'
+		}) {
+			granted[strings.ToLower(strings.TrimSpace(s))] = true
+		}
+
+		method := c.Request.Method
+		need := "read"
+		if method != "GET" && method != "HEAD" && method != "OPTIONS" {
+			need = "write"
+		}
+
+		if granted[need] || granted["admin"] {
+			c.Next()
+			return
+		}
+
+		response.Forbidden(c, "api key scope does not allow "+method)
+		c.Abort()
+	}
+}
+
+// OwnerGate — SEC-1 扩大面：owner plane 仅白名单 A（SU/OU/AU/OAM）可访问。
+// API key 无法进入（owner 组只挂 JWTAuth，Bearer api-key 解析失败 401）。
+func (h *Handlers) OwnerGate() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		username, _ := c.Get("username")
+		usernameStr, _ := username.(string)
+		if usernameStr == "" || !authz.IsInAdminWhitelistA(h.DB, usernameStr) {
+			response.Forbidden(c, "owner plane requires system management access")
+			c.Abort()
+			return
+		}
+		c.Next()
 	}
 }

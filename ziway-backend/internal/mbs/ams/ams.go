@@ -13,6 +13,7 @@ import (
 
 	"ziway/backend/internal/mbs"
 	"ziway/backend/pkg/jwt"
+	"ziway/backend/pkg/password"
 	"ziway/backend/pkg/response"
 )
 
@@ -202,6 +203,10 @@ func (s *Service) Register(c *gin.Context) {
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.BadRequest(c, "invalid request")
+		return
+	}
+	if err := password.ValidateStrength(req.Password); err != nil {
+		response.BadRequest(c, err.Error())
 		return
 	}
 	hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
