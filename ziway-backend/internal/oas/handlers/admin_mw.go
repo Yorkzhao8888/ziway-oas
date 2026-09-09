@@ -25,18 +25,21 @@ func (h *Handlers) AdminRoleGate() gin.HandlerFunc {
 		username, _ := c.Get("username")
 		if username == nil {
 			response.Unauthorized(c, "unauthorized")
+			c.Abort()
 			return
 		}
 
 		var user oasmodel.OASUser
 		if err := h.DB.Where("username = ?", username).First(&user).Error; err != nil {
 			response.Unauthorized(c, "user not found")
+			c.Abort()
 			return
 		}
 
 		// Check if user has admin role (whitelist A: SU/OU/AU/OAM)
 		if user.RoleCode != "SU" && user.RoleCode != "OU" && user.RoleCode != "AU" && user.RoleCode != "OAM" {
 			response.Forbidden(c, "access denied: admin role required")
+			c.Abort()
 			return
 		}
 
